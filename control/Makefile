@@ -21,8 +21,13 @@
 # Fraunhofer AISEC <trustme@aisec.fraunhofer.de>
 #
 
+CC ?= gcc-musl
+LOCAL_CFLAGS := -std=gnu99 -Icommon -I.. -I../include -I/usr/local/include -I/opt/cmldmusl/usr/include -pedantic -W
+LOCAL_CFLAGS += -DDEBUG_BUILD
+LDLIBS := -L/opt/cmldmusl/lib  -L/opt/cmldmusl/usr/lib -lc -lprotobuf-c -lprotobuf-c-text -lselinux -Lcommon -lcommon -lutil -lfts -lpcre
 
-LOCAL_CFLAGS := -std=gnu99 -I.. -I../include -Icommon -DDEBUG_BUILD
+
+#LOCAL_CFLAGS := -std=gnu99 -I.. -I../include -Icommon -DDEBUG_BUILD
 
 SRC_FILES := \
 	common/list.c \
@@ -53,7 +58,13 @@ libcommon:
 ${SRC_FILES}: protobuf
 
 control: libcommon ${SRC_FILES}
-	${CC} ${LOCAL_CFLAGS} ${SRC_FILES} -lc -lprotobuf-c -lprotobuf-c-text -Lcommon -lcommon -o control
+	musl-gcc ${LOCAL_CFLAGS} ${LDLIBS} ${SRC_FILES} -lc -lprotobuf-c -lprotobuf-c-text -Lcommon -lcommon -o control
+
+install:
+	cp control "/home/felix/vmstuff/imgs/trustme/cmlddisk/control-$(shell date +"%Y%m%d")"
+	cp -f control /home/felix/vmstuff/imgs/trustme/cmlddisk/control
+
+
 
 .PHONY: clean
 clean:

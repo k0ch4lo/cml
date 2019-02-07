@@ -191,8 +191,6 @@ cmld_is_internet_active(void)
 static int
 cmld_load_containers_cb(const char *path, const char *name, UNUSED void *data)
 {
-	uuid_t *uuid = NULL;
-
 	/* we should check for config files here, because the images
 	 * might not be synced to the device from the mdm, but the config files
 	 * should be always there
@@ -212,7 +210,7 @@ cmld_load_containers_cb(const char *path, const char *name, UNUSED void *data)
 		goto cleanup;
 	}
 
-	uuid = uuid_new(prefix);
+	uuid_t *uuid = uuid_new(prefix);
 	if (uuid) {
 		container_t *c = cmld_container_get_by_uuid(uuid);
 		if (c) {
@@ -734,7 +732,7 @@ cmld_init_a0(const char *path, const char *c0os)
 
 	container_t *new_a0 = container_new_internal(a0_uuid, "a0", CONTAINER_TYPE_CONTAINER, false, a0_ns_net, privileged, a0_os, NULL,
 			      a0_images_folder, a0_mnt, a0_ram_limit, 0xffffff00, 0, false, NULL,
-			      cmld_get_device_host_dns(), NULL, NULL, NULL, NULL);
+			      cmld_get_device_host_dns(), NULL, NULL, NULL);
 
 	/* depending on the storage of the a0 pointer, do ONE of the following: */
 	/* store a0 as first element of the cmld_containers_list */
@@ -940,36 +938,20 @@ cmld_container_create_clone(container_t *container)
 }
 
 container_t *
-cmld_container_create_from_config(const uint8_t *config, size_t config_len)
+cmld_container_create_from_config(const char *config, size_t config_len)
 {
 	ASSERT(config);
 	ASSERT(config_len);
-	char *path = mem_printf("%s/%s", cmld_path, CMLD_PATH_CONTAINERS_DIR);
-	IF_NULL_RETVAL(path, NULL);
-
-	container_t *c = container_new(path, NULL, config, config_len);
-	if (c) {
-		DEBUG("Created container %s (uuid=%s).", container_get_name(c),
-				uuid_string(container_get_uuid(c)));
-		cmld_containers_list = list_append(cmld_containers_list, c);
-	} else {
-		WARN("Could not create new container object from config");
-	}
-	mem_free(path);
-	return c;
+	ASSERT(0);
+	return NULL;
 }
 
 int
 cmld_container_destroy(container_t *container)
 {
-	int ret;
 	ASSERT(container);
-
-	ret = container_destroy(container);
-	cmld_containers_list = list_remove(cmld_containers_list, container);
-	container_free(container);
-
-	return ret;
+	ASSERT(0);
+	return 0;
 }
 
 int

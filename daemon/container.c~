@@ -26,7 +26,6 @@
 
 #include "container.h"
 
-#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include "common/macro.h"
 #include "common/mem.h"
 #include "common/uuid.h"
@@ -37,7 +36,6 @@
 #include "common/dir.h"
 #include "common/proc.h"
 #include "common/protobuf.h"
-#include "common/fd.h"
 
 #include "cmld.h"
 #include "c_cgroups.h"
@@ -45,7 +43,6 @@
 #include "c_vol.h"
 #include "c_cap.h"
 #include "c_service.h"
-#include "c_run.h"
 #include "container_config.h"
 #include "guestos_mgr.h"
 #include "guestos.h"
@@ -283,9 +280,6 @@ container_t *container_new_internal(const uuid_t * uuid,
 
 	/* initialize exit_status to 0 */
 	container->exit_status = 0;
-
-	/* initialize exec pid to a value indicating it is invalid */
-	container->active_exec_pid = -1;
 
 	container->ns_usr = ns_usr;
 	container->ns_net = ns_net;
@@ -688,12 +682,6 @@ pid_t container_get_service_pid(const container_t * container)
 	return service;
 }
 
-c_cgroups_t *container_get_cgroups(const container_t *container)
-{
-	ASSERT(container);
-	return container->cgroups;
-}
-
 int container_get_console_sock(const container_t * container)
 {
 	ASSERT(container);
@@ -843,8 +831,8 @@ void container_sigchld_cb(UNUSED int signum, event_signal_t * sig, void *data)
 {
 	container_t *container = data;
 
-	DEBUG("SIGCHLD handler called for container %s with PID %d, exec pid: %d",
-	      container_get_description(container), container->pid, container->active_exec_pid);
+	DEBUG("SIGCHLD handler called for container %s with PID %d",
+	      container_get_description(container), container->pid);
 
 	/* In the start function the childs init process gets set a process group which has
 	 * the same pgid as its pid. We wait for all processes belonging to our container's
@@ -852,10 +840,8 @@ void container_sigchld_cb(UNUSED int signum, event_signal_t * sig, void *data)
 	pid_t container_pid = container->pid;
 	pid_t pid = 0;
 	int status = 0;
-	while ((pid = waitpid(-1, &status, WNOHANG))) {
-		TRACE("Got exited child with PID: %d, exec PID: %d, exec pgid", pid, container->active_exec_pid);
+	while ((pid = waitpid(-(container_pid), &status, WNOHANG))) {
 		if (pid == container_pid) {
-			TRACE("Entered first branch");
 			if (WIFEXITED(status)) {
 				INFO("Container %s terminated (init process exited with status=%d)", container_get_description(container), WEXITSTATUS(status));
 				container->exit_status = WEXITSTATUS(status);
@@ -864,7 +850,6 @@ void container_sigchld_cb(UNUSED int signum, event_signal_t * sig, void *data)
 				     container_get_description(container),
 				     WTERMSIG(status));
 			} else {
-				TRACE("Entered continue");
 				continue;
 			}
 			/* remove the sigchld callback for this container from the event loop */
@@ -873,7 +858,6 @@ void container_sigchld_cb(UNUSED int signum, event_signal_t * sig, void *data)
 			/* the cleanup also sets the container state to stopped... */
 			container_cleanup(container);
 		} else if (pid == -1) {
-			TRACE("Entered PID == -1");
 			if (errno == ECHILD)
 				DEBUG
 				    ("Process group of container %s terminated completely",
@@ -883,18 +867,11 @@ void container_sigchld_cb(UNUSED int signum, event_signal_t * sig, void *data)
 					   container_get_description
 					   (container));
 			break;
-		} else if (pid == container->active_exec_pid) {
-			TRACE("Exec process exited. Closing sockets");
-			shutdown(container->console_sock_container, SHUT_WR);
-			shutdown(container->console_sock_cmld, SHUT_WR);
-			container->active_exec_pid = -1;
 		} else {
 			DEBUG("Reaped a child with PID %d for container %s",
 			      pid, container_get_description(container));
 		}
 	}
-
-	TRACE("No more exited childs. Leaving SIGCHLD callback");
 }
 
 static int
@@ -921,8 +898,6 @@ static int container_close_all_fds()
 	return 0;
 }
 
-
-
 static int container_start_child(void *data)
 {
 	int ret = 0;
@@ -931,187 +906,276 @@ static int container_start_child(void *data)
 
 	close(container->sync_sock_parent);
 	close(container->console_sock_cmld);
-	
-	char *kvm_root =
-	    mem_printf("/tmp/%s", uuid_string(container->uuid));
 
-	/*******************************************************************/
-	// wait on synchronization socket for start message code from parent
-	// check if everything went ok in the parent (else goto error)
-	char msg;
-	if (read(container->sync_sock_child, &msg, 1) != 1) {
-		WARN_ERRNO("Could not read from sync socket");
+	int pid = fork();
+
+	if (pid == -1) {
+		ret = -1;
 		goto error;
-	}
+	} else if (pid == 0) {
+		/*******************************************************************/
+		// wait on console task socket for exec command code from parent
+		// check if everything went ok in the parent (else goto error)
 
-	DEBUG("Received message from parent %d", msg);
-	if (msg == CONTAINER_START_SYNC_MSG_STOP) {
-		DEBUG("Received stop message, exiting...");
-		return 0;
-	}
+		//TODO do earlier
+		container->active_exec_pid = -1;
 
-	/* Reset umask and sigmask for /init */
-	sigset_t sigset;
-	umask(0);
-	sigemptyset(&sigset);
-	sigprocmask(SIG_SETMASK, &sigset, NULL);
+		while (1) {
+			TRACE("Waiting for new exec request %d",
+			      container->console_sock_container);
+			//TODO have to free manually?
+			DaemonToConsole *msg =
+			    (DaemonToConsole *)
+			    protobuf_recv_message(container->
+						  console_sock_container,
+						  &daemon_to_console__descriptor);
 
-	/* Make sure /init in node doesn`t kill CMLD daemon */
-	if (setpgid(0, 0) < 0) {
-		WARN("Could not move process group of container %s",
-		     container->name);
-		goto error;
-	}
+			DEBUG("Got exec request, trying to execute, cmd: ");
+			DEBUG(msg->command);
 
-	if (c_cgroups_start_child(container->cgroups) < 0) {
-		ret = CONTAINER_ERROR_CGROUPS;
-		goto error;
-	}
+			//TODO should never happen
+			if (container->active_exec_pid != -1) {
+				DEBUG
+				    ("Already executing command, skipping request");
+			}
 
-	if (c_net_start_child(container->net) < 0) {
-		ret = CONTAINER_ERROR_NET;
-		goto error;
-	}
+			if (msg != NULL && msg->command != NULL
+			    && strlen(msg->command) > 0) {
+				int epid = fork();
 
-	/* Make sure to execute the c_vol hook first, since it brings the childs mounts into
-	 * place as it is expected by the other submodules */
-	if (c_vol_start_child(container->vol) < 0) {
-		ret = CONTAINER_ERROR_VOL;
-		goto error;
-	}
+				if (epid < 0) {
+					ERROR
+					    ("Failed to fork process to  execute command. Skipping request.");
+				} else if (epid == 0) {
 
-	if (c_service_start_child(container->service) < 0) {
-		ret = CONTAINER_ERROR_SERVICE;
-		goto error;
-	}
+					if (-1 ==
+					    dup2(container->
+						 console_sock_container,
+						 STDIN_FILENO)) {
+						ERROR
+						    ("Failed to redirect stdin to cmld socket. Exiting...");
+						exit(EXIT_FAILURE);
+					}
 
-	if (c_cap_start_child(container) < 0) {
-		//ret = 1; // FIXME
-		goto error;
-	}
+					if (-1 ==
+					    dup2(container->
+						 console_sock_container,
+						 STDOUT_FILENO)) {
+						ERROR
+						    ("Failed to redirect stdout to cmld socket. Exiting...");
+						exit(EXIT_FAILURE);
+					}
 
-	char *root =
-	    (container->type == CONTAINER_TYPE_KVM) ? kvm_root : "/";
-	if (chdir(root) < 0) {
-		WARN_ERRNO("Could not chdir to \"%s\" in container %s",
-			   root, uuid_string(container->uuid));
-		goto error;
-	}
-	// bind sockets in csock_list
-	// make sure this is done *after* the c_vol hook, which brings the childs mounts into place
-	for (list_t * l = container->csock_list; l; l = l->next) {
-		container_sock_t *cs = l->data;
-		sock_unix_bind(cs->sockfd, cs->path);
-	}
+					if (-1 ==
+					    dup2(container->
+						 console_sock_container,
+						 STDERR_FILENO)) {
+						ERROR
+						    ("Failed to redirect stderr to cmld. Exiting...");
+						exit(EXIT_FAILURE);
+					}
+					//TODO TRACE inside cotainer ok?        
+					DEBUG("Executing supplied command");
+					execv(msg->command, msg->args);
 
-	// send success message to parent
-	DEBUG("Sending CONTAINER_START_SYNC_MSG_SUCCESS to parent");
-	char msg_success = CONTAINER_START_SYNC_MSG_SUCCESS;
-	if (write(container->sync_sock_child, &msg_success, 1) < 0) {
-		WARN_ERRNO("Could not write to sync socket");
-		goto error;
-	}
+					exit(EXIT_FAILURE);
+				}
 
-	/* Block on socket until the next sync message is sent by the parent */
-	if (read(container->sync_sock_child, &msg, 1) != 1) {
-		WARN_ERRNO("Could not read from sync socket");
-		goto error;
-	}
+				DEBUG("Waiting for exec child to finish");
+				waitpid(epid, NULL, 0);
 
-	DEBUG("Received message from parent %d", msg);
+				container->active_exec_pid = -1;
+			} else {
+				DEBUG
+				    ("Either request was corrupt or no command was supplied. Skipping request.");
+			}
 
-	if (msg == CONTAINER_START_SYNC_MSG_STOP) {
-		DEBUG("Received stop message, exiting...");
-		return 0;
-	}
-#ifdef CLONE_NEWCGROUP
-	// Try to span a new cgroup namspace, ignor if kernel does not support it
-	if (unshare(CLONE_NEWCGROUP) == -1)
-		WARN_ERRNO
-		    ("Could not unshare cgroup namespace, not supported by kernel.");
-	else
-		INFO("Successfully created new cgroup namespace");
-#endif
+			protobuf_free_message((ProtobufCMessage *) msg);
+			DEBUG("Finished cmld console exec request %d",
+			      container->console_sock_container);
+		}
+	} else {
+		char *kvm_root =
+		    mem_printf("/tmp/%s", uuid_string(container->uuid));
 
-	DEBUG("Will start %s after closing filedescriptors of %s",
-	      guestos_get_init(container->os),
-	      container_get_description(container));
-
-	DEBUG("init_argv:");
-	for (char **arg = container->init_argv; *arg; arg++) {
-		DEBUG("\t%s", *arg);
-	}
-	DEBUG("init_env:");
-	for (char **arg = container->init_env; *arg; arg++) {
-		DEBUG("\t%s", *arg);
-	}
-
-	if (setcon("u:r:init:s0") < 0) {
-		WARN_ERRNO("Could not set security context init");
-	}
-
-	if (!container->privileged) {
-		DEBUG
-		    ("Dropping all trustme-lsm privileges for container %s",
-		     container_get_description(container));
-		if (open
-		    ("/sys/kernel/security/trustme/drop_privileges",
-		     0) < 0)
-			WARN_ERRNO
-			    ("Could not drop trustme-lsm privileges");
-	}
-
-	if (hardware_backlight_on() < 0) {
-		WARN("Could not turn on backlight for container start...");
-	}
-
-	if (container->type == CONTAINER_TYPE_KVM) {
-		int fd_master;
-		int pid = forkpty(&fd_master, NULL, NULL, NULL);
-
-		if (pid == -1) {
-			ERROR_ERRNO("Forkpty() failed!");
+		/*******************************************************************/
+		// wait on synchronization socket for start message code from parent
+		// check if everything went ok in the parent (else goto error)
+		char msg;
+		if (read(container->sync_sock_child, &msg, 1) != 1) {
+			WARN_ERRNO("Could not read from sync socket");
 			goto error;
 		}
-		if (pid == 0) {	// child
-			char *const argv[] =
-			    { "/usr/bin/lkvm", "run", "-d", kvm_root,
-				NULL
-			};
-			execv(argv[0], argv);
-			WARN("Could not run exec for kvm container %s",
-			     uuid_string(container->uuid));
-		} else {	// parent
-			char buffer[128];
-			ssize_t read_bytes;
-			char *kvm_log = mem_printf("%s.kvm.log",
-						   container_get_images_dir
-						   (container));
-			read_bytes = read(fd_master, buffer, 128);
-			file_write(kvm_log, buffer, read_bytes);
-			while ((read_bytes =
-				read(fd_master, buffer, 128))) {
-				file_write_append(kvm_log, buffer,
-						  read_bytes);
+
+		DEBUG("Received message from parent %d", msg);
+		if (msg == CONTAINER_START_SYNC_MSG_STOP) {
+			DEBUG("Received stop message, exiting...");
+			return 0;
+		}
+
+		/* Reset umask and sigmask for /init */
+		sigset_t sigset;
+		umask(0);
+		sigemptyset(&sigset);
+		sigprocmask(SIG_SETMASK, &sigset, NULL);
+
+		/* Make sure /init in node doesn`t kill CMLD daemon */
+		if (setpgid(0, 0) < 0) {
+			WARN("Could not move process group of container %s",
+			     container->name);
+			goto error;
+		}
+
+		if (c_cgroups_start_child(container->cgroups) < 0) {
+			ret = CONTAINER_ERROR_CGROUPS;
+			goto error;
+		}
+
+		if (c_net_start_child(container->net) < 0) {
+			ret = CONTAINER_ERROR_NET;
+			goto error;
+		}
+
+		/* Make sure to execute the c_vol hook first, since it brings the childs mounts into
+		 * place as it is expected by the other submodules */
+		if (c_vol_start_child(container->vol) < 0) {
+			ret = CONTAINER_ERROR_VOL;
+			goto error;
+		}
+
+		if (c_service_start_child(container->service) < 0) {
+			ret = CONTAINER_ERROR_SERVICE;
+			goto error;
+		}
+
+		if (c_cap_start_child(container) < 0) {
+			//ret = 1; // FIXME
+			goto error;
+		}
+
+		char *root =
+		    (container->type == CONTAINER_TYPE_KVM) ? kvm_root : "/";
+		if (chdir(root) < 0) {
+			WARN_ERRNO("Could not chdir to \"%s\" in container %s",
+				   root, uuid_string(container->uuid));
+			goto error;
+		}
+		// bind sockets in csock_list
+		// make sure this is done *after* the c_vol hook, which brings the childs mounts into place
+		for (list_t * l = container->csock_list; l; l = l->next) {
+			container_sock_t *cs = l->data;
+			sock_unix_bind(cs->sockfd, cs->path);
+		}
+
+		// send success message to parent
+		DEBUG("Sending CONTAINER_START_SYNC_MSG_SUCCESS to parent");
+		char msg_success = CONTAINER_START_SYNC_MSG_SUCCESS;
+		if (write(container->sync_sock_child, &msg_success, 1) < 0) {
+			WARN_ERRNO("Could not write to sync socket");
+			goto error;
+		}
+
+		/* Block on socket until the next sync message is sent by the parent */
+		if (read(container->sync_sock_child, &msg, 1) != 1) {
+			WARN_ERRNO("Could not read from sync socket");
+			goto error;
+		}
+
+		DEBUG("Received message from parent %d", msg);
+
+		if (msg == CONTAINER_START_SYNC_MSG_STOP) {
+			DEBUG("Received stop message, exiting...");
+			return 0;
+		}
+#ifdef CLONE_NEWCGROUP
+		// Try to span a new cgroup namspace, ignor if kernel does not support it
+		if (unshare(CLONE_NEWCGROUP) == -1)
+			WARN_ERRNO
+			    ("Could not unshare cgroup namespace, not supported by kernel.");
+		else
+			INFO("Successfully created new cgroup namespace");
+#endif
+
+		DEBUG("Will start %s after closing filedescriptors of %s",
+		      guestos_get_init(container->os),
+		      container_get_description(container));
+
+		DEBUG("init_argv:");
+		for (char **arg = container->init_argv; *arg; arg++) {
+			DEBUG("\t%s", *arg);
+		}
+		DEBUG("init_env:");
+		for (char **arg = container->init_env; *arg; arg++) {
+			DEBUG("\t%s", *arg);
+		}
+
+		if (setcon("u:r:init:s0") < 0) {
+			WARN_ERRNO("Could not set security context init");
+		}
+
+		if (!container->privileged) {
+			DEBUG
+			    ("Dropping all trustme-lsm privileges for container %s",
+			     container_get_description(container));
+			if (open
+			    ("/sys/kernel/security/trustme/drop_privileges",
+			     0) < 0)
+				WARN_ERRNO
+				    ("Could not drop trustme-lsm privileges");
+		}
+
+		if (hardware_backlight_on() < 0) {
+			WARN("Could not turn on backlight for container start...");
+		}
+
+		if (container->type == CONTAINER_TYPE_KVM) {
+			int fd_master;
+			int pid = forkpty(&fd_master, NULL, NULL, NULL);
+
+			if (pid == -1) {
+				ERROR_ERRNO("Forkpty() failed!");
+				goto error;
 			}
-			return CONTAINER_ERROR;
+			if (pid == 0) {	// child
+				char *const argv[] =
+				    { "/usr/bin/lkvm", "run", "-d", kvm_root,
+			   NULL };
+				execv(argv[0], argv);
+				WARN("Could not run exec for kvm container %s",
+				     uuid_string(container->uuid));
+			} else {	// parent
+				char buffer[128];
+				ssize_t read_bytes;
+				char *kvm_log =
+				    mem_printf("%s.kvm.log",
+					       container_get_images_dir
+					       (container));
+				read_bytes = read(fd_master, buffer, 128);
+				file_write(kvm_log, buffer, read_bytes);
+				while ((read_bytes =
+					read(fd_master, buffer, 128))) {
+					file_write_append(kvm_log, buffer,
+							  read_bytes);
+				}
+				return CONTAINER_ERROR;
+			}
 		}
-	}
 
-	if (container_get_state(container) != CONTAINER_STATE_SETUP) {
-		DEBUG
-		    ("After closing all file descriptors no further debugging info can be printed");
-		if (container_close_all_fds()) {
-			WARN("Closing all file descriptors failed, continuing anyway...");
+		if (container_get_state(container) != CONTAINER_STATE_SETUP) {
+			DEBUG
+			    ("After closing all file descriptors no further debugging info can be printed");
+			if (container_close_all_fds()) {
+				WARN("Closing all file descriptors failed, continuing anyway...");
+			}
 		}
+
+		execve(guestos_get_init(container->os), container->init_argv,
+		       container->init_env);
+		WARN("Could not run exec for container %s",
+		     uuid_string(container->uuid));
+
+		return CONTAINER_ERROR;
 	}
-
-	execve(guestos_get_init(container->os), container->init_argv,
-	       container->init_env);
-	WARN("Could not run exec for container %s",
-	     uuid_string(container->uuid));
-
-	return CONTAINER_ERROR;
 
 error:
 	if (ret == 0) {
@@ -1242,56 +1306,6 @@ error:
 	container_kill(container);
 }
 
-int
-container_run(container_t *container, char *cmd, char **argv)
-{
-	ASSERT(cmd);
-
-	TRACE("Trying to excute command inside container");
-
-	/* Create a socketpair for communication with the console task */
-	int cfd[2];
-
-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, cfd)) {
-		WARN("Could not create socketpair for communication with console task!");
-		exit(EXIT_FAILURE);
-	}
-
-	container->console_sock_cmld = cfd[0];
-	container->console_sock_container = cfd[1];
-
-	//TODO
-	TRACE("Making cmld console socket nonblocking");
-	fd_make_non_blocking(container->console_sock_cmld);
-
-	/* close the childs end of the console task sockets */
-	//TODO close(container->console_sock_container);
-
-	pid_t pid = fork();
-
-	pid_t pgid = container->pid;
-
-	if(pid < 0)
-	{
-		exit(EXIT_FAILURE);
-	}
-	else if(pid == 0)
-	{
-		//if(setgid(container->pid) < 0)
-		//{
-		//	exit(EXIT_FAILURE);
-		//}
-
-		c_run_exec_process(container->console_sock_container, cmd, argv);
-		// Should ndever be reached
-		exit(EXIT_FAILURE);
-	}
-
-	container->active_exec_pid = pid;
-
-	return 0;	
-}
-
 int container_start(container_t * container)	//, const char *key)
 {
 	ASSERT(container);
@@ -1360,6 +1374,17 @@ int container_start(container_t * container)	//, const char *key)
 	container->sync_sock_parent = fd[0];
 	container->sync_sock_child = fd[1];
 
+	/* Create a socketpair for communication with the console task */
+	int cfd[2];
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, cfd)) {
+		WARN("Could not create socketpair for communication with console task!");
+		goto error_pre_clone;
+	}
+
+	container->console_sock_cmld = cfd[0];
+	container->console_sock_container = cfd[1];
+	container->active_exec_pid = -1;
 
 	/*********************************************************/
 	/* CLONE */
@@ -1383,7 +1408,7 @@ int container_start(container_t * container)	//, const char *key)
 	/* close the childs end of the sync sockets */
 	close(container->sync_sock_child);
 	/* close the childs end of the console task sockets */
-	close(container->console_sock_container);
+	//TODO close(container->console_sock_container);
 
 	/*********************************************************/
 	/* REGISTER SOCKET TO RECEIVE STATUS MESSAGES FROM CHILD */
@@ -1392,7 +1417,6 @@ int container_start(container_t * container)	//, const char *key)
 			 &container_start_post_clone_cb, container);
 	event_add_io(sync_sock_parent_event);
 
-	
 	/* register SIGCHILD handler which sets the state and
 	 * calls the appropriate cleanup functions if the child
 	 * dies */

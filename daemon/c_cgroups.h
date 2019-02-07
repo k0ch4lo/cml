@@ -63,6 +63,8 @@ c_cgroups_devices_deny_audio(c_cgroups_t *cgroups);
 int
 c_cgroups_set_ram_limit(c_cgroups_t *cgroups);
 
+int
+c_cgroups_set_pid(const container_t *container, const pid_t pid);
 /*******************/
 /* Hooks */
 int

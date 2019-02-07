@@ -36,7 +36,7 @@
 #include "cmld.h"
 #include "hardware.h"
 
-#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
+//#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include "common/macro.h"
 #include "common/mem.h"
 #include "common/protobuf.h"
@@ -300,121 +300,48 @@ static void control_container_status_free(ContainerStatus * c_status)
 	mem_free(c_status);
 }
 
-//static void control_cb_confirm_exec(int fd, unsigned events, event_io_t * io,
-//				    void *data)
-//{
-//	control_t *control = data;
-//
-//	TRACE("Console Callback called, events: read: %u, write: %u, except: %u", (events & EVENT_IO_READ), (events & EVENT_IO_WRITE), (events & EVENT_IO_EXCEPT));
-//
-//	// wait for confirmation of successful exec
-//	//TODO add timeout
-//	ConsoleToDaemon *msg = (ConsoleToDaemon *)
-//	    protobuf_recv_message
-//	    (container_get_console_sock(container),
-//	     &daemon_to_console__descriptor);
-//
-//
-//	if (msg == NULL || msg->code == CONSOLE_TO_DAEMON__CODE__EXEC_FAILURE) {
-//		DEBUG("Container exec response was empty or EXEC_FAILURE. Sending EXEC_END to client.");
-//
-//		DaemonToController out = DAEMON_TO_CONTROLLER__INIT;
-//		out.code = DAEMON_TO_CONTROLLER__CODE__EXEC_END;
-//		
-//		if (protobuf_send_message
-//		    (fd, (ProtobufCMessage *) & out) < 0) {
-//			WARN("Could not send container PID to MDM");
-//		}
-//
-//		DEBUG("Sent exec_end to client. Done serving request.");
-//
-//		return;
-//	}
-//
-//
-//				// occurs when executed process writes to stdout/stderr TODO check in container.c
-//	DEBUG("Registering exec confirmation callback for cmld console socket");
-//	event_io_t *event =
-//	    event_io_new(container_get_console_sock(container),
-//			 EVENT_IO_READ | EVENT_IO_WRITE | EVENT_IO_EXCEPT, control_cb_confirm_exec,
-//			 control);
-//	event_add_io(event);
-//}
-
-
-static ssize_t control_read_send(control_t *control, int fd){
-	char buf[1024];
-		int count;
-
-		TRACE("Trying to read from console socket");
-
-		if ((count = read(fd, buf, 1023)) > 0) {
-			buf[count] = 0;
-
-			TRACE("Got command output: %s", buf);
-
-			//TODO safe?
-			DaemonToController out = DAEMON_TO_CONTROLLER__INIT;
-			out.code = DAEMON_TO_CONTROLLER__CODE__EXEC_OUTPUT;
-			out.exec_output = buf;
-
-
-			TRACE("Trying to send output to control");
-			if (protobuf_send_message(control->sock_client,
-			     (ProtobufCMessage *) & out) < 0) {
-				WARN("Could not send exec output to MDM, message was");
-				WARN(buf);
-			}
-
-			TRACE("Successfully sent output to control");
-		}
-		
-		TRACE("Count was %d", count);
-	
-		return count;
-}
-
 static void control_cb_read_console(int fd, unsigned events, event_io_t * io,
 				    void *data)
 {
 	//TODO access to control_t inside callback ok?
 	control_t *control = data;
 
-	TRACE("Console callback called, events: read: %u, write: %u, except: %u", (events & EVENT_IO_READ), (events & EVENT_IO_WRITE), (events & EVENT_IO_EXCEPT));
+	if ((events & EVENT_IO_READ)) {
 
-	
-	if ((events & EVENT_IO_EXCEPT)) {
-	//EVENT_IO_READ not set or read of length 0
-		TRACE("Detected termination of executed command. Stop listening.");
+		char buf[1024];
+		int count;
 
-		//TODO does read everything open cmld for DDOS from container?
-		int i = 0, count = 1;
+		if (0 < (count = read(fd, buf, 1023))) {
+			buf[count] = 0;
 
-		while(i < 100 && count > 0){
-			TRACE("Trying to read remaining data from socket");
-			count = control_read_send(control, fd);
+			//TODO safe?
+			DaemonToController out = DAEMON_TO_CONTROLLER__INIT;
+			out.code = DAEMON_TO_CONTROLLER__CODE__EXEC_OUTPUT;
+			out.exec_output = buf;
 
-			TRACE("Response from read was %d", count);
-		}		
-
+			if (protobuf_send_message
+			    (control->sock_client,
+			     (ProtobufCMessage *) & out)) {
+				WARN("Could not send exec output to MDM");
+			}
+		}
+	}
+	// events == EVENT_IO_EXCPT
+	else {
+		TRACE("EVENT_IO_EXCEPT on socket %d, closing...", fd);
 		event_remove_io(io);
 		event_io_free(io);
 		close(fd);
-	
+
 		DaemonToController out = DAEMON_TO_CONTROLLER__INIT;
 		out.code = DAEMON_TO_CONTROLLER__CODE__EXEC_END;
-	
+
 		if (protobuf_send_message
-		    (control->sock_client, (ProtobufCMessage *) & out) < 0) {
+		    (control->sock_client, (ProtobufCMessage *) & out)) {
 			WARN("Could not send exec output to MDM");
 		}
-	
-		TRACE("Sent notification of command termination to client");
-	
-	} else if ((events & EVENT_IO_READ)) {
-		TRACE("Got output from exec'ed command, trying to read from console socket");
 
-		control_read_send(control, fd);
+		return;
 	}
 }
 
@@ -540,8 +467,6 @@ control_handle_message(const ControllerToDaemon * msg, int fd,
 	    ? control_get_container_by_uuid_string(msg->container_uuids[0])
 	    : NULL;
 
-	TRACE("Tried to get container, now processing command");
-
 	switch (msg->command) {
 		// Global commands:
 
@@ -605,9 +530,10 @@ control_handle_message(const ControllerToDaemon * msg, int fd,
 	case CONTROLLER_TO_DAEMON__COMMAND__GET_CONTAINER_STATUS:{
 			// assemble list of relevant containers and allocate memory for result
 			list_t *containers =
-			    control_build_container_list_from_uuids
-			    (msg->n_container_uuids,
-			     msg->container_uuids);
+			    control_build_container_list_from_uuids(msg->
+								    n_container_uuids,
+								    msg->
+								    container_uuids);
 			size_t n = list_length(containers);
 			ContainerStatus **results =
 			    mem_new(ContainerStatus *, n);
@@ -640,9 +566,10 @@ control_handle_message(const ControllerToDaemon * msg, int fd,
 	case CONTROLLER_TO_DAEMON__COMMAND__GET_CONTAINER_CONFIG:{
 			// assemble list of relevant containers and allocate memory for result
 			list_t *containers =
-			    control_build_container_list_from_uuids
-			    (msg->n_container_uuids,
-			     msg->container_uuids);
+			    control_build_container_list_from_uuids(msg->
+								    n_container_uuids,
+								    msg->
+								    container_uuids);
 			size_t n = list_length(containers);
 			ContainerConfig **results =
 			    mem_new0(ContainerConfig *, n);
@@ -750,13 +677,23 @@ control_handle_message(const ControllerToDaemon * msg, int fd,
 			else if (!msg->has_guestos_config_certificate)
 				WARN("PUSH_GUESTOS_CONFIG without config certificate");
 			else {
-				guestos_mgr_push_config
-				    (msg->guestos_config_file.data,
-				     msg->guestos_config_file.len,
-				     msg->guestos_config_signature.data,
-				     msg->guestos_config_signature.len,
-				     msg->guestos_config_certificate.data,
-				     msg->guestos_config_certificate.len);
+				guestos_mgr_push_config(msg->
+							guestos_config_file.
+							data,
+							msg->
+							guestos_config_file.len,
+							msg->
+							guestos_config_signature.
+							data,
+							msg->
+							guestos_config_signature.
+							len,
+							msg->
+							guestos_config_certificate.
+							data,
+							msg->
+							guestos_config_certificate.
+							len);
 			}
 		}
 		break;
@@ -789,7 +726,8 @@ control_handle_message(const ControllerToDaemon * msg, int fd,
 				if (start_params->has_setup) {
 					INFO("Setting Setup mode for Container!");
 					container_set_setup_mode(container,
-								 start_params->setup);
+								 start_params->
+								 setup);
 				}
 			}
 			// key is asserted to be the user entered passwd/pin
@@ -882,72 +820,58 @@ control_handle_message(const ControllerToDaemon * msg, int fd,
 		break;
 
 	case CONTROLLER_TO_DAEMON__COMMAND__CONTAINER_EXEC_CMD:{
-			if(container == NULL || container_get_active_exec_pid(container) != -1)
-			{
-				TRACE("Failed to exec. Wrong UUID or or already executing command in this container.");
-
-				DaemonToController out = DAEMON_TO_CONTROLLER__INIT;
-				out.code = DAEMON_TO_CONTROLLER__CODE__EXEC_END;
-			
-				if (protobuf_send_message
-				    (control->sock_client, (ProtobufCMessage *) & out) < 0) {
-					WARN("Could not send exec output to MDM");
-				}
-
-				TRACE("Sent notification of command termination to control client");
-
+			DEBUG("Got exec command, fowrwarding to container:");
+			DEBUG(msg->exec_command);
+			if (container == NULL)
 				break;
+
+			DaemonToConsole exec = DAEMON_TO_CONSOLE__INIT;
+			//TODO check safe
+			exec.code = DAEMON_TO_CONSOLE__CODE__EXEC;
+			exec.command = msg->exec_command;
+			exec.args = msg->exec_args;
+			if (protobuf_send_message
+			    (container_get_console_sock(container),
+			     (ProtobufCMessage *) & exec) < 0) {
+				WARN("Could not send exec message to container");
 			}
-			else
-			{
-				//TODO handle empty command, no command
-				TRACE("Got exec command: %s", msg->exec_command);
-				//Add NULL pointer at end of array
-				//TODO validate has cmd and args
-				uint64_t i = 0;
-				char ** exec_args = mem_alloc(sizeof(char *) * (msg->n_exec_args + 1));
 
-				while (i < msg->n_exec_args)
-				{
-					TRACE("Got argument: %s", msg->exec_args[i]);
-					exec_args[i] = mem_strdup(msg->exec_args[i]);
-					i++;
-				}
+			/* connection succeeded so register socket for receiving data */
+			fd_make_non_blocking(container_get_console_sock
+					     (container));
 
-				exec_args[i] = NULL;
-
-				container_run(container, msg->exec_command, exec_args);		
-				//container_run(container, msg->exec_command, NULL);		
-	
-				/* connection succeeded so register socket for receiving data */
-				//fd_make_non_blocking(container_get_console_sock
-				//		     (container));
-	
-				// occurs when executed process writes to stdout/stderr TODO check in container.c
-				DEBUG("Registering read callback for cmld console socket");
-				event_io_t *event =
-				    event_io_new(container_get_console_sock(container),
-						 EVENT_IO_READ | EVENT_IO_EXCEPT, control_cb_read_console,
-						 control);
-				event_add_io(event);
-			}
+			// occurs when executed process writes to stdout/stderr TODO check in container.c
+			event_io_t *event =
+			    event_io_new(container_get_console_sock(container),
+					 EVENT_IO_READ, control_cb_read_console,
+					 control);
+			event_add_io(event);
 		}
 		break;
 
 	case CONTROLLER_TO_DAEMON__COMMAND__CONTAINER_EXEC_INPUT:{
-			DEBUG("Got input for exec'ed process. Sending message");
-
 			if (container == NULL)
 				break;
 
 			if (container_get_active_exec_pid(container) != -1) {
-				write(container_get_console_sock (container),
-					msg->exec_input, strlen(msg->exec_input));
+				unsigned int written = 0;
+				int res = 0;
 
-			}
-			else
-			{
-				DEBUG("Failed to get active PID of exec'ed process. Doing nothing");
+				while (written < strlen(msg->exec_input)) {
+					res =
+					    write(container_get_console_sock
+						  (container),
+						  msg->exec_input + written,
+						  strlen(msg->exec_input) -
+						  written);
+
+					if (res == -1) {
+						WARN("Error while writing input to exec'ed command\n");
+						break;
+					} else {
+						written += res;
+					}
+				}
 			}
 		}
 		break;
@@ -1186,8 +1110,9 @@ control_remote_reconnect_cb(UNUSED event_timer_t * timer, void *data)
 	}
 	fd_make_non_blocking(control->sock_client);
 
-	int res = sock_inet_connect(control->sock_client, control->hostip,
-				    control->port);
+	int res =
+	    sock_inet_connect(control->sock_client, control->hostip,
+			      control->port);
 	if (-1 == res) {
 		DEBUG_ERRNO("Connecting failed to remote host %s:%d",
 			    control->hostip, control->port);

@@ -671,9 +671,7 @@ c_cgroups_set_ram_limit(c_cgroups_t *cgroups)
 	return 0;
 }
 
-#ifndef _BSD_SOURCE
 #define _BSD_SOURCE             /* See feature_test_macros(7) */
-#endif
 
 static void
 c_cgroups_devices_watch_dev_dir_cb(const char *path, uint32_t mask, UNUSED event_inotify_t *inotify, void *data)
@@ -805,6 +803,34 @@ c_cgroups_create_and_mount_subsys(const char *subsys, const char *mount_path)
 	return ret;
 }
 
+
+int
+c_cgroups_set_pid(const container_t *container, const pid_t pid)
+{
+	char *pid_string = mem_printf("%d", pid);
+
+	// set cgroups
+	list_t *first = hardware_get_active_cgroups_subsystems();
+	list_t *current = first;
+	char *elem = NULL;
+
+	do {
+		TRACE("Trying to set cgroup");
+
+		elem = (char *) current->data;
+		//TODO dont hardcode
+		//TOD Oweak reference?
+		char *procs_path = mem_printf("/sys/fs/cgroup/%s/%s/cgroup.procs", elem, uuid_string(container_get_uuid(container)));
+
+		TRACE("Trying to put into cgroup %s", procs_path);
+
+		file_write_append(procs_path, pid_string, sizeof(pid_string));
+
+		current = current->next;
+	} while(current != first);
+
+	return 0;	
+}
 /*******************/
 /* Hooks */
 

@@ -70,18 +70,6 @@ typedef enum {
 } container_type_t;
 
 /**
- * Structure to define the configuration for a virtual network
- * interface in a container. It defines the name and if cmld
- * should configure it in its c_net submodule.
- */
-typedef struct container_vnet_cfg {
-	char *vnet_name;
-	char *rootns_name;
-	bool configure;
-} container_vnet_cfg_t;
-
-
-/**
  * Represents the current container state.
  */
 typedef enum {
@@ -165,8 +153,7 @@ container_new_internal(
 	const char *dns_server,
 	list_t *net_ifaces,
 	char **allowed_devices,
-	char **assigned_devices,
-	list_t *vnet_cfg_list
+	char **assigned_devices
 );
 
 /**
@@ -178,17 +165,17 @@ container_new_internal(
  * present in the given store_path and is loaded from there.
  *
  * !uuid && config: In this case, the container does NOT yet exist and should be
- * created in the given store_path using the given config buffer and a random
+ * created in the given store_path using the given config string and a random
  * UUID.
  *
  * uuid && config: In this case, the container does NOT yet exist and should be
- * created in the given store_path using the given config buffer and the given
+ * created in the given store_path using the given config string and the given
  * UUID.
  *
  * @return The new container object or NULL if something went wrong.
  */
 container_t *
-container_new(const char *store_path, const uuid_t *uuid, const uint8_t *config, size_t config_len);
+container_new(const char *store_path, const uuid_t *uuid, const char *config, size_t config_len);
 
 /*
 container_t *
@@ -290,6 +277,12 @@ container_get_color(const container_t *container);
 char *
 container_get_color_rgb_string(const container_t *container);
 
+int
+container_get_console_sock(const container_t *container);
+
+int
+container_get_active_exec_pid(const container_t *container);
+
 /**
  * Remove a container persistently from disk, i.e. remove its configuration and
  * wipe its images. This does not free the container object, this must be done
@@ -337,6 +330,12 @@ container_suspend(container_t *container);
  */
 int
 container_resume(container_t *container);
+
+/* Runs a given command inside a container's context
+ *
+ */
+int
+container_run(container_t *container, char *cmd, char **argv);
 
 /**
  * Start the given container using the given key to decrypt its filesystem
@@ -661,26 +660,5 @@ container_get_creation_time(const container_t *container);
 
 void
 container_set_setup_mode(container_t *container, bool setup);
-
-/**
- * Initialize a container_vnet_cfg_t data structure and allocate needed memory
- */
-container_vnet_cfg_t *
-container_vnet_cfg_new(const char *if_name, const char *rootns_name, bool configure);
-
-/**
- * Free all memory used by a container_vnet_cfg_t data structure
- */
-void
-container_vnet_cfg_free(container_vnet_cfg_t *vnet_cfg);
-
-/**
- * This function provides the container's runtime config
- * of veth interfaces in form of a container_vnet_cfg_t* list.
- * The elements contain the veth name inside the container and
- * the runtime generated interface name of the rootns endpoint.
- */
-list_t *
-container_get_vnet_runtime_cfg_new(container_t *container);
 
 #endif /* CONTAINER_H */
