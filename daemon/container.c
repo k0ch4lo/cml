@@ -1257,12 +1257,17 @@ container_run(container_t *container, char *cmd, char **argv)
 		exit(EXIT_FAILURE);
 	}
 
+	//int bufsize = 1;
+	//int bufsizelen = sizeof(bufsize);
+	//int r = setsockopt((cfd[0], SOL_SOCKET, SO_SNDBUF, &bufsize, &bufsizelen))
+	//TRACE()
 	container->console_sock_cmld = cfd[0];
 	container->console_sock_container = cfd[1];
 
 	//TODO
 	TRACE("Making cmld console socket nonblocking");
 	fd_make_non_blocking(container->console_sock_cmld);
+//	fd_make_non_blocking(container->console_sock_container);
 
 	/* close the childs end of the console task sockets */
 	//TODO close(container->console_sock_container);

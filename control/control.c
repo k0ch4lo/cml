@@ -348,7 +348,6 @@ int main(int argc, char *argv[])
 		if (optind > argc - 2)
 			print_usage(argv[0]);
 
-		TRACE("Got run command");
 		has_response = true;
 		msg.command = CONTROLLER_TO_DAEMON__COMMAND__CONTAINER_EXEC_CMD;
 		msg.exec_command = argv[optind];
@@ -357,15 +356,12 @@ int main(int argc, char *argv[])
 
 		if(optind < argc - 1)
 		{
-			TRACE("Parse arguments for exec, argc=%i", argc);
 			msg.exec_args = mem_alloc(sizeof(char *) * (argc - 4));
-			TRACE("Allocated %i bytes", sizeof(char *) * (argc - 4));
 
 			uint64_t i = 0;
 
 			while(optind < argc - 1)
 			{
-				TRACE("Parsing argument at %lu: %s", optind, argv[optind]);
 				msg.exec_args[i] = mem_strdup(argv[optind]);
 
 				optind++;
@@ -373,10 +369,7 @@ int main(int argc, char *argv[])
 			}
 		}
 
-		TRACE("Have %i arguments for exec command", argc - 4);
 		msg.n_exec_args = argc - 4;
-
-		TRACE("[CLIENT] Got exec command: %s",msg.exec_command);
 
 		optind = argc - 1;
 	} else
@@ -388,14 +381,12 @@ int main(int argc, char *argv[])
 
 	msg.n_container_uuids = 1;
 	msg.container_uuids = mem_new(char *, 1);
+	//TODO strdup
 	msg.container_uuids[0] = argv[optind];
 
 send_message:
-	TRACE("[CLIENT] Before connect");
 	sock = sock_connect(socket_file);
-	TRACE("[CLIENT] Before send_message");
 	send_message(sock, &msg);
-	TRACE("[CLIENT] Before send_message");
 
 	if (!strcasecmp(command, "run")) {
 			TRACE("[CLIENT] Processing response for run command");
@@ -406,7 +397,7 @@ send_message:
 				ERROR("[CLIENT] Failed to fork(), exiting...\n");
 				exit(EXIT_FAILURE);
 			} else if (pid == 0) {
-				TRACE("[CLIENT] User input reading child forked");
+				TRACE("[CLIENT] User input reading child forked, PID: %i", getpid());
 
 				char buf[1024];
 				unsigned int count;
@@ -420,20 +411,23 @@ send_message:
 
 						TRACE("[CLIENT] Got input for exec'ed process: %s", buf);
 
-						ControllerToDaemon msg =
+						ControllerToDaemon inputmsg =
 						    CONTROLLER_TO_DAEMON__INIT;
-						msg.command =
+						inputmsg.container_uuids = mem_new(char*, 1);
+						inputmsg.container_uuids[0] = argv[optind];
+						inputmsg.n_container_uuids = 1;
+						inputmsg.command =
 						    CONTROLLER_TO_DAEMON__COMMAND__CONTAINER_EXEC_INPUT;
-						msg.exec_input = buf;
+						inputmsg.exec_input = buf;
 
-						TRACE("[CLIENT] Sending input for exec'ed process");
+						TRACE("[CLIENT] Sending input for exec'ed process in container %s",msg.container_uuids[0]);
 
-						send_message(sock, &msg);
+						send_message(sock, &inputmsg);
 						TRACE("[CLIENT] Sent input to cmld");
 					}	
 				}
 			} else {
-				TRACE("[CLIENT] Exec'ed process output receiving  child forked");
+				TRACE("[CLIENT] Exec'ed process output receiving  child forked, PID: %i", getpid());
 				//write(STDOUT_FILENO, "Waiting for output from exec'ed command...", strlen("Waiting for output from exec'ed command..."));
 	
 				while (1) {
@@ -454,6 +448,7 @@ send_message:
 						write(STDOUT_FILENO, "[exec output] ", 14);
 						write(STDOUT_FILENO, resp->exec_output,
 							  strlen(resp->exec_output));
+						fflush(stdout);
 
 					} else if (resp->code ==
 						   DAEMON_TO_CONTROLLER__CODE__EXEC_END)

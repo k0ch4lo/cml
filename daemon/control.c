@@ -346,12 +346,13 @@ static ssize_t control_read_send(control_t *control, int fd){
 	char buf[1024];
 		int count;
 
-		TRACE("Trying to read from console socket");
-
-		if ((count = read(fd, buf, 1023)) > 0) {
+		//TRACE("[DAEMON CONTROL] Trying to read from console socket");
+		
+		//TODO deadlock possible?
+		while ((count = read(fd, buf, 1023)) > 0) {
 			buf[count] = 0;
 
-			TRACE("Got command output: %s", buf);
+			//TRACE("[DAEMON CONTROL] Got command output: %s\n[END DAEMON CONTROL]", buf);
 
 			//TODO safe?
 			DaemonToController out = DAEMON_TO_CONTROLLER__INIT;
@@ -359,17 +360,18 @@ static ssize_t control_read_send(control_t *control, int fd){
 			out.exec_output = buf;
 
 
-			TRACE("Trying to send output to control");
+			//TRACE("Trying to send output to control");
 			if (protobuf_send_message(control->sock_client,
 			     (ProtobufCMessage *) & out) < 0) {
 				WARN("Could not send exec output to MDM, message was");
 				WARN(buf);
 			}
 
-			TRACE("Successfully sent output to control");
+			//TRACE("Successfully sent output to control");
+			//TRACE("Count was %d", count);
 		}
 		
-		TRACE("Count was %d", count);
+		//TRACE("[FINISHED] Count was %d", count);
 	
 		return count;
 }
@@ -385,13 +387,13 @@ static void control_cb_read_console(int fd, unsigned events, event_io_t * io,
 	
 	if ((events & EVENT_IO_EXCEPT)) {
 	//EVENT_IO_READ not set or read of length 0
-		TRACE("Detected termination of executed command. Stop listening.");
+		//TRACE("Detected termination of executed command. Stop listening.");
 
 		//TODO does read everything open cmld for DDOS from container?
 		int i = 0, count = 1;
 
 		while(i < 100 && count > 0){
-			TRACE("Trying to read remaining data from socket");
+			//TRACE("Trying to read remaining data from socket");
 			count = control_read_send(control, fd);
 
 			TRACE("Response from read was %d", count);
@@ -409,10 +411,10 @@ static void control_cb_read_console(int fd, unsigned events, event_io_t * io,
 			WARN("Could not send exec output to MDM");
 		}
 	
-		TRACE("Sent notification of command termination to client");
+		//TRACE("Sent notification of command termination to client");
 	
 	} else if ((events & EVENT_IO_READ)) {
-		TRACE("Got output from exec'ed command, trying to read from console socket");
+		//TRACE("Got output from exec'ed command, trying to read from console socket");
 
 		control_read_send(control, fd);
 	}
@@ -539,8 +541,6 @@ control_handle_message(const ControllerToDaemon * msg, int fd,
 	container_t *container = (msg->n_container_uuids == 1)
 	    ? control_get_container_by_uuid_string(msg->container_uuids[0])
 	    : NULL;
-
-	TRACE("Tried to get container, now processing command");
 
 	switch (msg->command) {
 		// Global commands:
@@ -901,7 +901,7 @@ control_handle_message(const ControllerToDaemon * msg, int fd,
 			else
 			{
 				//TODO handle empty command, no command
-				TRACE("Got exec command: %s", msg->exec_command);
+				//TRACE("Got exec command: %s", msg->exec_command);
 				//Add NULL pointer at end of array
 				//TODO validate has cmd and args
 				uint64_t i = 0;
@@ -909,7 +909,7 @@ control_handle_message(const ControllerToDaemon * msg, int fd,
 
 				while (i < msg->n_exec_args)
 				{
-					TRACE("Got argument: %s", msg->exec_args[i]);
+					//TRACE("Got argument: %s", msg->exec_args[i]);
 					exec_args[i] = mem_strdup(msg->exec_args[i]);
 					i++;
 				}
@@ -935,14 +935,16 @@ control_handle_message(const ControllerToDaemon * msg, int fd,
 		break;
 
 	case CONTROLLER_TO_DAEMON__COMMAND__CONTAINER_EXEC_INPUT:{
-			DEBUG("Got input for exec'ed process. Sending message");
+			DEBUG("Got input for exec'ed process. Writing to socket: %s", msg->exec_input);
 
 			if (container == NULL)
 				break;
 
 			if (container_get_active_exec_pid(container) != -1) {
-				write(container_get_console_sock (container),
+				int res = fd_write(container_get_console_sock(container),
 					msg->exec_input, strlen(msg->exec_input));
+
+				TRACE("Tried to write \"%s\" to console_sock cmld, strlen: %i, res: %i", msg->exec_input, strlen(msg->exec_input), res);
 
 			}
 			else

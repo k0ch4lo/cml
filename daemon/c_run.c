@@ -94,8 +94,9 @@ c_run_exec_process(int console_sock_container, char *cmd, char **argv)
 		exit(EXIT_FAILURE);
 	}
 
-	if (-1 == dup2(console_sock_container, STDOUT_FILENO)) {
+	if(-1 == dup2(console_sock_container, STDOUT_FILENO)) {
 		ERROR ("Failed to redirect stdout to cmld socket. Exiting...");
+		exit(EXIT_FAILURE);
 	}
 
 	if (-1 == dup2(console_sock_container, STDERR_FILENO)) {
@@ -122,13 +123,13 @@ c_run_exec_process(int console_sock_container, char *cmd, char **argv)
 //	}
 //
 
-	TRACE("[CHILD] Executing supplied command %s", cmd);
-	int r = execve(cmd, argv, NULL);
-	if(r == -1)
-	{
-		printf("Failed to execve, errno: %s\n", strerror(errno));
-		exit(EXIT_FAILURE);
-	}
+	//TRACE("[CHILD] Executing supplied command %s, PID is: %i", cmd, getpid());
+	//int r = execve(cmd, argv, NULL);
+	//if(r == -1)
+	//{
+	//	printf("Failed to execve, errno: %s\n", strerror(errno));
+	//	exit(EXIT_FAILURE);
+	//}
 	//execve(cmd, argv, NULL);
 	//execve(cmd, argv, execve);
 
@@ -136,8 +137,22 @@ c_run_exec_process(int console_sock_container, char *cmd, char **argv)
 
 	char buf[100];
 	buf[0] = 0;
+	int count = 0;
 	char * res;
 
+	while(1)
+	{
+		printf("Before read\n");
+		count = read(STDIN_FILENO, buf, 99);
+		printf("After read\n");
+		buf[count] = 0;
+
+		write(STDOUT_FILENO, "[ECHO]", 6);
+		write(STDOUT_FILENO, buf, count);
+		write(STDOUT_FILENO, "\n", 1);
+	}
+
+	exit(EXIT_FAILURE);
 
 	FILE *fd = popen ("ls -l /", "r");
 
