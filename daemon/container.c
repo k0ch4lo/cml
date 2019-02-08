@@ -26,7 +26,7 @@
 
 #include "container.h"
 
-#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
+//#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include "common/macro.h"
 #include "common/mem.h"
 #include "common/uuid.h"
@@ -1282,13 +1282,14 @@ container_run(container_t *container, char *cmd, char **argv)
 	}
 	else if(pid == 0)
 	{
-		//if(setgid(container->pid) < 0)
-		//{
-		//	exit(EXIT_FAILURE);
-		//}
+		if(setgid(container->pid) < 0)
+		{
+			ERROR("Failed to set GID of exec child to container PID");
+			exit(EXIT_FAILURE);
+		}	
 
 		c_run_exec_process(container->console_sock_container, cmd, argv);
-		// Should ndever be reached
+		
 		exit(EXIT_FAILURE);
 	}
 

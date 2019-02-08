@@ -36,7 +36,7 @@
 #include "cmld.h"
 #include "hardware.h"
 
-#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
+//#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include "common/macro.h"
 #include "common/mem.h"
 #include "common/protobuf.h"
@@ -935,7 +935,7 @@ control_handle_message(const ControllerToDaemon * msg, int fd,
 		break;
 
 	case CONTROLLER_TO_DAEMON__COMMAND__CONTAINER_EXEC_INPUT:{
-			DEBUG("Got input for exec'ed process. Writing to socket: %s", msg->exec_input);
+			TRACE("Got input for exec'ed process. Writing to socket: %s", msg->exec_input);
 
 			if (container == NULL)
 				break;

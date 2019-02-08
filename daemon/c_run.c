@@ -7,7 +7,7 @@
 #include <sys/syscall.h>
 
 
-#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
+//#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include <macro.h>
 
 #include "common/mem.h"
@@ -105,7 +105,7 @@ c_run_exec_process(int console_sock_container, char *cmd, char **argv)
 	}
 
 	
-	//c_run_set_namespaces(getgid());
+	c_run_set_namespaces(getgid());
 	
 	//c_cgroups_set_pid(container, getpid());
 
@@ -130,7 +130,7 @@ c_run_exec_process(int console_sock_container, char *cmd, char **argv)
 	//	printf("Failed to execve, errno: %s\n", strerror(errno));
 	//	exit(EXIT_FAILURE);
 	//}
-	//execve(cmd, argv, NULL);
+	execve(cmd, argv, NULL);
 	//execve(cmd, argv, execve);
 
 	int i = 0;

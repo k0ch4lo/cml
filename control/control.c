@@ -27,7 +27,7 @@
 #include "control.pb-c.h"
 #endif
 
-#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
+//#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include "common/macro.h"
 #include "common/mem.h"
 #include "common/protobuf.h"
@@ -445,7 +445,6 @@ send_message:
 					{
 						//TRACE("[CLIENT] Output: %s", resp->exec_output);
 
-						write(STDOUT_FILENO, "[exec output] ", 14);
 						write(STDOUT_FILENO, resp->exec_output,
 							  strlen(resp->exec_output));
 						fflush(stdout);
