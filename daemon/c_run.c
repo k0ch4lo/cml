@@ -7,13 +7,17 @@
 #include <sys/syscall.h>
 
 
-//#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
+#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include <macro.h>
 
 #include "common/mem.h"
 #include "common/dir.h"
+#include "common/file.h"
+#include "hardware.h"
+#include "container.h"
 #include "c_run.h"
 #include "c_cgroups.h"
+#include "c_cap.h"
 
 int setns(int fd, int nstype)
 {
@@ -29,7 +33,7 @@ setns_cb(const char *path, const char *file, void *data)
 	int *i = data;
 
 	char *ns_file = mem_printf("%s%s", path, file);
-	//TRACE("Opening namespace file %s", ns_file);
+	TRACE("Opening namespace file %s", ns_file);
 
 	if (*i >= MAX_NS) {
 		ERROR("Too many namespace files found in %s", path);
@@ -59,7 +63,7 @@ c_run_set_namespaces(pid_t pid)
 {
 	char *pid_string = mem_printf("%d", pid);
 
-	//TRACE("Setting namespaces for pid %s", pid_string);
+	TRACE("Setting namespaces for pid %s", pid_string);
 
 	// set namespaces
 	char *folder = mem_printf("/proc/%d/ns/", pid);
@@ -75,96 +79,74 @@ c_run_set_namespaces(pid_t pid)
 		}
 	}
 
-	//TRACE("Successfully joined all namespaces");
+	TRACE("Successfully joined all namespaces");
 
 	return 0;
 }
 
 int
-c_run_exec_process(int console_sock_container, char *cmd, char **argv)
+c_run_set_cgroups(const container_t *container, const pid_t pid)
 {
-	// wait on console task socket for exec request from cmld
-	//TRACE("[exec child] Trying to execute: %s, %p", cmd, (char *) argv);
+	char *pid_string = mem_printf("%d", pid);
 
-	//TODO tty option
-	//TODO access to container struct (no exec)!
+	// set cgroups
+	list_t *first = hardware_get_active_cgroups_subsystems();
+	list_t *current = first;
+	char *elem = NULL;
 
-	if (-1 == dup2(console_sock_container, STDIN_FILENO)) {
+	do {
+		TRACE("Trying to set cgroup\n");
+
+		elem = (char *) current->data;
+		//TODO dont hardcode
+		//TOD Oweak reference?
+		if(strcmp(elem,"pids") != 0)
+		{
+			char *procs_path = mem_printf("/sys/fs/cgroup/%s/%s/cgroup.procs", elem, uuid_string(container_get_uuid(container)));
+
+			TRACE("Trying to put into cgroup %s\n", procs_path);
+
+			file_write_append(procs_path, pid_string, sizeof(pid_string));
+		}
+
+		//printf("Going to next element, current: %p, next: %p\n", current, current->next);
+		current = current->next;
+	} while(current != first && current != NULL);
+
+	TRACE("Done setting cgroups");
+
+	return 0;	
+}
+
+int
+c_run_exec_process(container_t *container, char *cmd, char **argv)
+{
+	if (-1 == dup2(container_get_console_container_sock(container), STDIN_FILENO)) {
 		ERROR("Failed to redirect stdin to cmld socket. Exiting...");
 		exit(EXIT_FAILURE);
 	}
 
-	if(-1 == dup2(console_sock_container, STDOUT_FILENO)) {
+	if(-1 == dup2(container_get_console_container_sock(container), STDOUT_FILENO)) {
 		ERROR ("Failed to redirect stdout to cmld socket. Exiting...");
 		exit(EXIT_FAILURE);
 	}
 
-	if (-1 == dup2(console_sock_container, STDERR_FILENO)) {
+	if (-1 == dup2(container_get_console_container_sock(container), STDERR_FILENO)) {
 		ERROR("Failed to redirect stderr to cmld. Exiting...");
 		exit(EXIT_FAILURE);
 	}
 
+
+	c_run_set_cgroups(container, getpid());
 	
 	c_run_set_namespaces(getgid());
 	
-	//c_cgroups_set_pid(container, getpid());
+	c_cap_start_child(container);
 
-
-//	ConsoleToDaemon exec = CONSOLE_TO_DAEMON__INIT;
-//
-//	//TODO check safe
-//	exec.code = CONSOLE_TO_DAEMON__CODE__EXEC_SUCCESS;
-//	exec.pid = mypid;
-//	
-//	if (protobuf_send_message
-//	    (container->console_sock_container,
-//	     (ProtobufCMessage *) & exec) < 0) {
-//		WARN("Could not send exec confirmation message to cmld");
-//	}
-//
-
-	//TRACE("[CHILD] Executing supplied command %s, PID is: %i", cmd, getpid());
-	//int r = execve(cmd, argv, NULL);
-	//if(r == -1)
-	//{
-	//	printf("Failed to execve, errno: %s\n", strerror(errno));
-	//	exit(EXIT_FAILURE);
-	//}
+	printf("Trying to exec");
 	execve(cmd, argv, NULL);
-	//execve(cmd, argv, execve);
 
-	int i = 0;
-
-	char buf[100];
-	buf[0] = 0;
-	int count = 0;
-	char * res;
-
-	while(1)
-	{
-		printf("Before read\n");
-		count = read(STDIN_FILENO, buf, 99);
-		printf("After read\n");
-		buf[count] = 0;
-
-		write(STDOUT_FILENO, "[ECHO]", 6);
-		write(STDOUT_FILENO, buf, count);
-		write(STDOUT_FILENO, "\n", 1);
-	}
+	ERROR_ERRNO("Failed to execve");
 
 	exit(EXIT_FAILURE);
-
-	FILE *fd = popen ("ls -l /", "r");
-
-	do{
-	
-	
-		res = fgets(buf,100, fd);
-		printf("%s", res);
-	}
-	while (res != NULL);
-	
-	pclose(fd);
-
-	exit(EXIT_SUCCESS);
 }

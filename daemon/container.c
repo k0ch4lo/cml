@@ -700,6 +700,12 @@ int container_get_console_sock(const container_t * container)
 	return container->console_sock_cmld;
 }
 
+int container_get_console_container_sock(const container_t * container)
+{
+	ASSERT(container);
+	return container->console_sock_container;
+}
+
 int container_get_active_exec_pid(const container_t * container)
 {
 	ASSERT(container);
@@ -1288,7 +1294,7 @@ container_run(container_t *container, char *cmd, char **argv)
 			exit(EXIT_FAILURE);
 		}	
 
-		c_run_exec_process(container->console_sock_container, cmd, argv);
+		c_run_exec_process(container, cmd, argv);
 		
 		exit(EXIT_FAILURE);
 	}

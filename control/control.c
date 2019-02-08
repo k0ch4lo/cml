@@ -405,7 +405,7 @@ send_message:
 				while (1){
 						TRACE("[CLIENT] Trying to read input for exec'ed process");
 					if ((count =
-					     read(STDIN_FILENO, buf, 1023)) > 0) {
+					     read(STDIN_FILENO, buf, 1)) > 0) {
 
 						buf[count] = 0;
 

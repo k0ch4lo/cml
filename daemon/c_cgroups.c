@@ -30,6 +30,7 @@
 #include "hardware.h"
 
 #include "common/mem.h"
+#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include "common/macro.h"
 #include "common/file.h"
 #include "common/event.h"

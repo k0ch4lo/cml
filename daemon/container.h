@@ -281,6 +281,9 @@ int
 container_get_console_sock(const container_t *container);
 
 int
+container_get_console_container_sock(const container_t *container);
+
+int
 container_get_active_exec_pid(const container_t *container);
 
 /**
