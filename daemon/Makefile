@@ -22,10 +22,10 @@
 #
 
 
-CC ?= gcc
-LOCAL_CFLAGS := -std=gnu99 -Icommon -I.. -I../include -pedantic -Wall -Wextra -Werror
+CC ?= gcc-musl
+LOCAL_CFLAGS := -std=gnu99 -Icommon -I.. -I../include -I/usr/local/include -I/opt/cmldmusl/usr/include -pedantic -W
 LOCAL_CFLAGS += -DDEBUG_BUILD
-LDLIBS := -lc -lprotobuf-c -lprotobuf-c-text -lselinux -Lcommon -lcommon -lutil
+LDLIBS := -L/opt/cmldmusl/lib  -L/opt/cmldmusl/usr/lib -lc -lprotobuf-c -lprotobuf-c-text -lselinux -Lcommon -lcommon -lutil -lfts -lpcre
 
 TRUSTME_HARDWARE := x86
 
@@ -74,7 +74,8 @@ SRC_FILES := main.c \
 	common/cryptfs.c \
 	common/reboot.c \
 	power.c \
-	hw_$(TRUSTME_HARDWARE).c
+	hw_$(TRUSTME_HARDWARE).c \
+	c_run.c
 
 protobuf: container.proto control.proto guestos.proto common/logf.proto device.proto scd.proto c_service.proto
 	protoc-c --c_out=. container.proto
@@ -88,12 +89,12 @@ protobuf: container.proto control.proto guestos.proto common/logf.proto device.p
 
 ${PROTO_SRC}: protobuf
 
-libcommon:
-	$(MAKE) -C common libcommon
+cmld: ${PROTO_SRC} ${SRC_FILES}
+	musl-gcc ${LOCAL_CFLAGS} ${SRC_FILES} ${PROTO_SRC} ${LDLIBS} -o cmld
 
-cmld: libcommon ${PROTO_SRC} ${SRC_FILES}
-	${CC} ${LOCAL_CFLAGS} ${SRC_FILES} ${PROTO_SRC} ${LDLIBS} -o cmld
-
+install:
+	cp cmld "/home/felix/vmstuff/imgs/trustme/dev/cmlddisk/cmld-$(shell date +"%Y%m%d")"
+	cp -f cmld /home/felix/vmstuff/imgs/trustme/dev/cmlddisk/cmld
 
 .PHONY: clean
 clean:

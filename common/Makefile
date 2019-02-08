@@ -22,9 +22,13 @@
 #
 
 
-CC ?= gcc
+CC := musl-gcc
+LOCAL_CFLAGS := -std=gnu99 -Icommon -I.. -I../include -I/usr/local/include -I/opt/cmldmusl/usr/include -pedantic -W
+LOCAL_CFLAGS += -DDEBUG_BUILD
+LDLIBS := -L/opt/cmldmusl/lib  -L/opt/cmldmusl/usr/lib -lc -lprotobuf-c -lprotobuf-c-text -lselinux -Lcommon -lcommon -lutil -lfts -lpcre
 
-LOCAL_CFLAGS += -I../include -pedantic -Wall -Wextra -Werror -std=gnu99 -D _POSIX_C_SOURCE=200809L -D _XOPEN_SOURCE=700 -D _DEFAULT_SOURCE
+
+LOCAL_CFLAGS += -I../include -Wall -Wextra -std=gnu99 -D _POSIX_C_SOURCE=200809L -D _XOPEN_SOURCE=700 -D _DEFAULT_SOURCE
 
 .PHONY: all
 all: libcommon
@@ -33,34 +37,33 @@ libcommon: event list logf mem str nl
 	ar rcs libcommon.a nl.o logf.o event.o list.o mem.o str.o
 
 event: event.c event.h
-	${CC} -c ${LOCAL_CFLAGS} event.c -o event.o
+	musl-gcc -c ${LOCAL_CFLAGS} event.c -o event.o
 
 list: list.c list.h
-	${CC} -c ${LOCAL_CFLAGS} list.c -o list.o
+	musl-gcc -c ${LOCAL_CFLAGS} list.c -o list.o
 
 logf: logf.c logf.h
-	${CC} -c ${LOCAL_CFLAGS} logf.c -o logf.o
+	musl-gcc -c ${LOCAL_CFLAGS} logf.c -o logf.o
 
 mem: mem.c mem.h
-	${CC} -c ${LOCAL_CFLAGS} mem.c -o mem.o
+	musl-gcc -c ${LOCAL_CFLAGS} mem.c -o mem.o
 
 str: str.c str.h
-	${CC} -c ${LOCAL_CFLAGS} str.c -o str.o
+	musl-gcc -c ${LOCAL_CFLAGS} str.c -o str.o
 
 nl: nl.c nl.h
-	${CC} -c ${LOCAL_CFLAGS} nl.c -o nl.o
+	musl-gcc -c ${LOCAL_CFLAGS} nl.c -o nl.o
 
 sock: sock.c sock.h
-	${CC} -c ${LOCAL_CFLAGS} sock.c -o sock.o
+	musl-gcc -c ${LOCAL_CFLAGS} sock.c -o sock.o
 	
 
 uuid: uuid.c uuid.h
-	${CC} -c ${LOCAL_CFLAGS} uuid.c -o uuid.o
+	musl-gcc -c ${LOCAL_CFLAGS} uuid.c -o uuid.o
 
 
 protobuf: logf.proto
 	protoc-c --c_out=. logf.proto
-
 
 .PHONY: clean
 clean:

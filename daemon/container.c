@@ -26,6 +26,7 @@
 
 #include "container.h"
 
+#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include "common/macro.h"
 #include "common/mem.h"
 #include "common/uuid.h"
@@ -35,6 +36,9 @@
 #include "common/file.h"
 #include "common/dir.h"
 #include "common/proc.h"
+#include "common/protobuf.h"
+#include "common/fd.h"
+#include "common/mem.h"
 
 #include "cmld.h"
 #include "c_cgroups.h"
@@ -42,10 +46,12 @@
 #include "c_vol.h"
 #include "c_cap.h"
 #include "c_service.h"
+#include "c_run.h"
 #include "container_config.h"
 #include "guestos_mgr.h"
 #include "guestos.h"
 #include "hardware.h"
+#include "control.pb-c.h"
 
 #include <inttypes.h>
 #include <stdint.h>
@@ -140,6 +146,11 @@ struct container {
 	 * the FD to the child via clone */
 	int sync_sock_parent; /* parent sock for start synchronization */
 	int sync_sock_child; /* child sock for start synchronization */
+
+	// needed for control exec
+	int console_sock_cmld;
+	int console_sock_container;
+	int active_exec_pid;
 
 	// Submodules
 	c_cgroups_t *cgroups;
@@ -276,6 +287,9 @@ container_new_internal(
 
 	/* initialize exit_status to 0 */
 	container->exit_status = 0;
+
+	/* initialize exec pid to a value indicating it is invalid */
+	container->active_exec_pid = -1;
 
 	container->ns_usr = ns_usr;
 	container->ns_net = ns_net;
@@ -704,6 +718,30 @@ container_oom_protect_service(const container_t *container)
     mem_free(path);
 }
 
+c_cgroups_t *container_get_cgroups(const container_t *container)
+{
+	ASSERT(container);
+	return container->cgroups;
+}
+
+int container_get_console_sock(const container_t * container)
+{
+	ASSERT(container);
+	return container->console_sock_cmld;
+}
+
+int container_get_console_container_sock(const container_t * container)
+{
+	ASSERT(container);
+	return container->console_sock_container;
+}
+
+int container_get_active_exec_pid(const container_t * container)
+{
+	ASSERT(container);
+	return container->active_exec_pid;
+}
+
 int
 container_get_exit_status(const container_t *container)
 {
@@ -880,6 +918,11 @@ container_sigchld_cb(UNUSED int signum, event_signal_t *sig, void *data)
 			else
 				WARN_ERRNO("waitpid failed for container %s", container_get_description(container));
 			break;
+		} else if (pid == container->active_exec_pid) {
+			DEBUG("Exec'ed process exited. Closing sockets");
+			shutdown(container->console_sock_container, SHUT_WR);
+			shutdown(container->console_sock_cmld, SHUT_WR);
+			container->active_exec_pid = -1;
 		} else {
 			DEBUG("Reaped a child with PID %d for container %s", pid, container_get_description(container));
 		}
@@ -1214,6 +1257,71 @@ error:
 	container_kill(container);
 }
 
+int
+container_run(container_t *container, char *cmd, uint64_t argc, char **argv)
+{
+	ASSERT(cmd);
+
+	TRACE("Trying to excute command inside container");
+
+	/* Create a socketpair for communication with the console task */
+	int cfd[2];
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, cfd)) {
+		WARN("Could not create socketpair for communication with console task!");
+		exit(EXIT_FAILURE);
+	}
+
+	container->console_sock_cmld = cfd[0];
+	container->console_sock_container = cfd[1];
+
+	//TODO
+	TRACE("Making cmld console socket nonblocking");
+	fd_make_non_blocking(container->console_sock_cmld);
+
+	pid_t pid = fork();
+
+	if (pid < 0) {
+		exit(EXIT_FAILURE);
+	} else if ( pid == 0 ) {
+		//Add NULL pointer to end of argv
+		char ** exec_args = NULL;
+
+		if (argv != NULL)
+		{ 
+			uint64_t i = 0;
+			exec_args = mem_alloc(sizeof(char *) * (argc + 1));
+	
+			while (i < argc)
+			{
+				TRACE("Got argument: %s", argv[i]);
+				exec_args[i] = mem_strdup(argv[i]);
+				i++;
+			}
+
+			exec_args[i] = NULL;
+		}
+
+
+		if(setpgid(0, container->pid) < 0)
+		{
+			ERROR("Failed to set GID of exec child to container PID");
+			exit(EXIT_FAILURE);
+		}
+
+		/* close the cmld end of the console task sockets */
+		close(container->console_sock_cmld);
+
+		c_run_exec_process(container, cmd, exec_args);
+		//free argv
+		mem_free_array((void *) exec_args, argc);	
+		exit(EXIT_FAILURE);
+	}
+
+	container->active_exec_pid = pid;
+
+	return 0;
+}
 
 int
 container_start(container_t *container)//, const char *key)

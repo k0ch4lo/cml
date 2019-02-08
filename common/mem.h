@@ -34,6 +34,7 @@
 
 #include <stddef.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <string.h>
 
 /**
@@ -120,6 +121,14 @@ mem_printf(const char *fmt, ...)
  */
 void
 mem_free(void *mem);
+
+/**
+ * Frees the allocated memory of each array element and the array itself.
+ * @param array Array to be freed.
+ * @param size Array size.
+ */
+void
+mem_free_array(void **array, uint64_t size);
 
 /**
  * Convenience wrapper macro for mem_alloc which calculates

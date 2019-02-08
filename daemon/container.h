@@ -290,6 +290,15 @@ container_get_color(const container_t *container);
 char *
 container_get_color_rgb_string(const container_t *container);
 
+int
+container_get_console_sock(const container_t *container);
+
+int
+container_get_console_container_sock(const container_t *container);
+
+int
+container_get_active_exec_pid(const container_t *container);
+
 /**
  * Remove a container persistently from disk, i.e. remove its configuration and
  * wipe its images. This does not free the container object, this must be done
@@ -337,6 +346,12 @@ container_suspend(container_t *container);
  */
 int
 container_resume(container_t *container);
+
+/* Runs a given command inside a container's context
+ *
+ */
+int
+container_run(container_t *container, char *cmd, uint64_t argc, char **argv);
 
 /**
  * Start the given container using the given key to decrypt its filesystem

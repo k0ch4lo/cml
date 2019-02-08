@@ -22,6 +22,7 @@
  */
 
 #define _GNU_SOURCE
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -105,4 +106,23 @@ void
 mem_free(void *mem)
 {
 	free(mem);
+}
+
+void
+mem_free_array(void **array, uint64_t size)
+{
+	if (array != NULL) {
+		uint64_t i = 0;
+		while(i < size) {
+			if(array[i] != NULL) {
+				DEBUG("[MEM] Freeing element %lu", i);
+				mem_free(array[i]);
+			}
+
+			i++;
+		}
+
+		DEBUG("[MEM] Freeing array");
+		mem_free(array);
+	}
 }
