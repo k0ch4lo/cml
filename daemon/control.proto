@@ -173,9 +173,10 @@ message ControllerToDaemon {
 	optional ContainerStartParams container_start_params = 11;	// start parameters for CONTAINER_START
 	optional AssignInterfaceParams assign_iface_params = 12;	// parameter for CONTAINER_ASSIGNIFACE / CONTAINER_UNASSIGNIFACE
 	optional bytes container_config_file = 13;		// new container config for CREATE_CNTAINER
-	optional string exec_command = 14;
-	repeated  string exec_args = 15;
-	optional string exec_input = 16;
+	optional string exec_command = 14; // command to execute in container context
+	repeated  string exec_args = 15; // arguments for command to be executed
+	optional bool exec_pty = 16 [ default = false ]; // assign pty to command
+	optional string exec_input = 17; // input to be sent to already executing command
 
 	// Daemon
 	optional bytes guestos_config_file = 20;	// new/updated GuestOS config for PUSH_GUESTOS_CONFIG
@@ -253,26 +254,26 @@ message DaemonToController {
 	optional string exec_output = 207;
 }
 
-message DaemonToConsole {
-	// Note: This message may change in the future!
-	enum Code {
-		EXEC = 1;
-		INPUT = 2;
-	}
-
-	required Code code = 1;
-	required string command = 2 [ default = "/bin/sh" ];
-	repeated string  args = 3;
-	optional string input = 4 [default = ""];
-}
-
-message ConsoleToDaemon {
-	// Note: This message may change in the future!
-	enum Code {
-		EXEC_FAILURE = 1;
-		EXEC_SUCCESS = 2;
-	}
-
-	required Code code = 1;
-	required uint32 pid = 2 [ default = 0 ];
-}
+//message DaemonToConsole {
+//	// Note: This message may change in the future!
+//	enum Code {
+//		EXEC = 1;
+//		INPUT = 2;
+//	}
+//
+//	required Code code = 1;
+//	required string command = 2 [ default = "/bin/sh" ];
+//	repeated string  args = 3;
+//	optional string input = 4 [default = ""];
+//}
+//
+//message ConsoleToDaemon {
+//	// Note: This message may change in the future!
+//	enum Code {
+//		EXEC_FAILURE = 1;
+//		EXEC_SUCCESS = 2;
+//	}
+//
+//	required Code code = 1;
+//	required uint32 pid = 2 [ default = 0 ];
+//}

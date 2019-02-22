@@ -27,7 +27,7 @@
 #include "control.pb-c.h"
 #endif
 
-#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
+//#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include "common/macro.h"
 #include "common/mem.h"
 #include "common/protobuf.h"
@@ -348,7 +348,7 @@ int main(int argc, char *argv[])
 		has_response = true;
 		msg.command = CONTROLLER_TO_DAEMON__COMMAND__CONTAINER_EXEC_CMD;
 		msg.exec_command = argv[optind];
-		msg.exec_pty = 0;
+		msg.exec_pty = 1;
 
 		optind += 1;
 
@@ -398,12 +398,12 @@ send_message:
 
 
 
-		//struct termios termios_run = termios_before;
-		//termios_run.c_cflag &= ~(ICRNL | IXON | IXOFF );
-		//termios_run.c_oflag &= ~(OPOST);
-		//termios_run.c_lflag &= ~(ISIG | ICANON);
-		//termios_run.c_lflag &= ECHO | ECHOCTL;
-		//tcsetattr(STDIN_FILENO, TCSANOW, &termios_run);
+		struct termios termios_run = termios_before;
+		termios_run.c_cflag &= ~(ICRNL | IXON | IXOFF );
+		termios_run.c_oflag &= ~(OPOST);
+		termios_run.c_lflag &= ~(ISIG | ICANON | ECHO | ECHOCTL);
+//		termios_run.c_lflag &= ECHO | ECHOCTL;
+		tcsetattr(STDIN_FILENO, TCSANOW, &termios_run);
 
 		int pid = fork();
 

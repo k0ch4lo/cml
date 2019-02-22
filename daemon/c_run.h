@@ -7,6 +7,6 @@ int
 c_run_set_namespaces(pid_t pid);
 
 int
-c_run_exec_process(container_t *container, char *cmd, char **argv);
+c_run_exec_process(container_t *container, int create_pty, char *cmd, char **argv);
 
 #endif //end C_RUN_H

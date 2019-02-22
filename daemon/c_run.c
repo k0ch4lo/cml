@@ -3,10 +3,12 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <pty.h>
 #include <sys/wait.h>
 #include <sys/syscall.h>
+#include <sys/socket.h>
 
-#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
+//#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include <macro.h>
 
 #include "common/mem.h"
@@ -104,7 +106,7 @@ c_run_set_cgroups(const container_t *container, const pid_t pid)
 	char *elem = NULL;
 
 	do {
-		TRACE("Trying to set cgroup\n");
+		TRACE("[EXEC] Trying to set cgroup\n");
 
 		elem = (char *)current->data;
 		//TODO dont hardcode
@@ -112,7 +114,7 @@ c_run_set_cgroups(const container_t *container, const pid_t pid)
 		if (strcmp(elem, "pids") != 0) {
 			char *procs_path = mem_printf("/sys/fs/cgroup/%s/%s/cgroup.procs", elem, uuid_string(container_get_uuid(container)));
 
-			TRACE("Trying to put into cgroup %s\n", procs_path);
+			TRACE("[EXEC] Trying to put into cgroup %s\n", procs_path);
 
 			file_write_append(procs_path, pid_string, sizeof(pid_string));
 
@@ -131,20 +133,20 @@ c_run_set_cgroups(const container_t *container, const pid_t pid)
 	return 0;
 }
 
-int
-c_run_exec_process(container_t *container, char *cmd, char **argv)
+static int
+do_exec (container_t *container, char *cmd, char **argv, int fd)
 {
-	if (-1 == dup2(container_get_console_container_sock(container), STDIN_FILENO)) {
+	if (-1 == dup2(fd, STDIN_FILENO)) {
 		ERROR("Failed to redirect stdin to cmld socket. Exiting...");
 		exit(EXIT_FAILURE);
 	}
 
-	if(-1 == dup2(container_get_console_container_sock(container), STDOUT_FILENO)) {
+	if(-1 == dup2(fd, STDOUT_FILENO)) {
 		ERROR ("Failed to redirect stdout to cmld socket. Exiting...");
 		exit(EXIT_FAILURE);
 	}
 
-	if (-1 == dup2(container_get_console_container_sock(container), STDERR_FILENO)) {
+	if (-1 == dup2(fd, STDERR_FILENO)) {
 		ERROR("Failed to redirect stderr to cmld. Exiting...");
 		exit(EXIT_FAILURE);
 	}
@@ -155,9 +157,126 @@ c_run_exec_process(container_t *container, char *cmd, char **argv)
 
 	c_cap_start_child(container);
 
+
+	TRACE("[EXEC: Executing command %s]", cmd);
 	execve(cmd, argv, NULL);
 
 	ERROR_ERRNO("Failed to execve");
 
 	exit(EXIT_FAILURE);
+}
+
+static void
+readloop(int from_fd, int to_fd)
+{
+        int count = 0;
+        char buf[1024];
+
+        while(1)
+        {
+            if(0 < (count = read(from_fd, &buf, sizeof(buf)-1)))
+            {
+                buf[count] = 0;
+                write(to_fd, buf, count+1);
+            } else {
+				exit(EXIT_FAILURE);
+			}
+        }
+}
+
+int
+c_run_exec_process(container_t *container, int create_pty, char *cmd, char **argv)
+{
+	//create new PTY
+	if (1) {
+		TRACE("[EXEC] Starting to create new pty");
+	
+	    int pty_master = 0;
+	
+	    if(-1 == (pty_master = posix_openpt(O_RDWR)))
+	    {   
+	        ERROR("[EXEC] Failed to get new PTY master fd\n");
+	        exit(EXIT_FAILURE);
+	    }   
+	
+	
+	    if(0 != grantpt(pty_master))
+	    {   
+	        printf("Failed to grantpt()\n");
+	        exit(EXIT_FAILURE);
+	    }   
+	
+	    if(0 != unlockpt(pty_master))
+	    {   
+	        printf("Failed to unlockpt()\n");
+	        exit(EXIT_FAILURE);;
+	    }   
+	
+	    char pty_slave_name[50];
+	    ptsname_r(pty_master, pty_slave_name, sizeof(pty_slave_name));
+	    TRACE("Created new pty with fd: %i, slave name: %s\n", pty_master, pty_slave_name);
+	
+		//fork childs for reading/writing PTY master fd
+	    int pid = fork();
+	
+	    if(pid == -1) 
+	    {   
+	        ERROR("Failed to fork(), exiting...\n");
+	        exit(EXIT_FAILURE);
+	    }   
+	    else if(pid == 0)
+	    {   
+	            readloop(pty_master, container_get_console_container_sock(container));
+	    }   
+	    else
+	    { 
+			// fork child to execute command
+			int pid2 = fork();
+
+			if (pid2 < 0) {
+				ERROR("[EXEC] Failed to fork child to excute command.");
+				exit(EXIT_FAILURE);
+			} else if (pid2 == 0) {
+				int pty_slave_fd = -1;
+
+				// open PTY slave
+				if (-1 == (pty_slave_fd = open(pty_slave_name, O_RDWR))) {
+   				    ERROR("Failed to open pty slave: %s\n", pty_slave_name);
+					//TODO check parent exits
+					shutdown(pty_master, SHUT_WR);
+    			    exit(EXIT_FAILURE);
+				}
+
+				const char *current_pty = ctermid(NULL);
+		        DEBUG("[EXEC] Current controlling PTY is: %s\n", current_pty);
+	
+	    	    setsid();
+	
+	        	if(-1 == ioctl(STDIN_FILENO, TIOCNOTTY)) {
+	    	        TRACE("[EXEC] Failed to release current controlling pty.\n");
+	        	}
+	
+		        if(-1 == ioctl(pty_slave_fd, TIOCSCTTY, NULL)) {
+		       	    ERROR("[EXEC] Failed to set controlling pty slave\n");
+					exit(EXIT_FAILURE);
+	    	    }
+	
+				// attach executed process to new PTY slave
+				do_exec(container, cmd, argv, pty_slave_fd);
+			} else {
+				//TODO kill if executing child exits 
+	        	while(1) {
+	        	    readloop(container_get_console_container_sock(container), pty_master);
+	        	}
+			}	
+	
+	        exit(EXIT_SUCCESS);
+	    }   
+	
+	    exit(EXIT_SUCCESS);
+	} else {
+		// attach executed process directly to console socket
+		TRACE("Executing without PTY");
+		do_exec(container, cmd, argv, container_get_console_container_sock(container));
+	}
 }

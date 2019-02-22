@@ -351,7 +351,7 @@ container_resume(container_t *container);
  *
  */
 int
-container_run(container_t *container, char *cmd, uint64_t argc, char **argv);
+container_run( container_t *container, int create_pty, char *cmd, uint64_t argc, char **argv);
 
 /**
  * Start the given container using the given key to decrypt its filesystem

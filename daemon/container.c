@@ -26,7 +26,7 @@
 
 #include "container.h"
 
-#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
+//#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include "common/macro.h"
 #include "common/mem.h"
 #include "common/uuid.h"
@@ -1258,7 +1258,7 @@ error:
 }
 
 int
-container_run(container_t *container, char *cmd, uint64_t argc, char **argv)
+container_run(container_t *container, int create_pty, char *cmd, uint64_t argc, char **argv)
 {
 	ASSERT(cmd);
 
@@ -1287,7 +1287,7 @@ container_run(container_t *container, char *cmd, uint64_t argc, char **argv)
 		//Add NULL pointer to end of argv
 		char ** exec_args = NULL;
 
-		if (argv != NULL)
+		if (argc > 0 && argv != NULL)
 		{ 
 			uint64_t i = 0;
 			exec_args = mem_alloc(sizeof(char *) * (argc + 1));
@@ -1312,7 +1312,7 @@ container_run(container_t *container, char *cmd, uint64_t argc, char **argv)
 		/* close the cmld end of the console task sockets */
 		close(container->console_sock_cmld);
 
-		c_run_exec_process(container, cmd, exec_args);
+		c_run_exec_process(container, create_pty, cmd, exec_args);
 		//free argv
 		mem_free_array((void *) exec_args, argc);	
 		exit(EXIT_FAILURE);

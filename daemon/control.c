@@ -36,7 +36,7 @@
 #include "cmld.h"
 #include "hardware.h"
 
-#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
+//#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include "common/macro.h"
 #include "common/mem.h"
 #include "common/protobuf.h"
@@ -890,7 +890,7 @@ control_handle_message(control_t *control, const ControllerToDaemon *msg, int fd
 			} else {
 				TRACE("Got exec command: %s", msg->exec_command);
 			
-				container_run(container, msg->exec_command, msg->n_exec_args, msg->exec_args);
+				container_run(container, msg->exec_pty, msg->exec_command, msg->n_exec_args, msg->exec_args);
 
 				DEBUG("Registering read callback for cmld console socket");
 				event_io_t *event =
