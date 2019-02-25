@@ -188,7 +188,7 @@ int
 c_run_exec_process(container_t *container, int create_pty, char *cmd, char **argv)
 {
 	//create new PTY
-	if (1) {
+	if (create_pty) {
 		TRACE("[EXEC] Starting to create new pty");
 	
 	    int pty_master = 0;

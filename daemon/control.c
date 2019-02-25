@@ -888,7 +888,7 @@ control_handle_message(control_t *control, const ControllerToDaemon *msg, int fd
 
 				break;
 			} else {
-				TRACE("Got exec command: %s", msg->exec_command);
+				TRACE("Got exec command: %s, attach PTY: %d", msg->exec_command, msg->exec_pty);
 			
 				container_run(container, msg->exec_pty, msg->exec_command, msg->n_exec_args, msg->exec_args);
 
