@@ -728,6 +728,17 @@ c_cgroups_t *container_get_cgroups(const container_t *container)
 	return container->cgroups;
 }
 
+int
+container_add_pid_to_cgroups(const container_t *container, pid_t pid)
+{
+	return c_cgroups_add_pid(container->cgroups, pid);
+}
+
+int
+container_cap_start_child(container_t *container) {
+	c_cap_start_child(container);
+}
+
 c_run_t *container_get_run(const container_t *container)
 {
 	ASSERT(container);

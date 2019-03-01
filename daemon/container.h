@@ -265,6 +265,12 @@ container_get_service_pid(const container_t *container);
 void
 container_oom_protect_service(const container_t *container);
 
+/*
+ * Add process with given PID to cgroups of given container
+ */
+int
+container_add_pid_to_cgroups(const container_t *container, pid_t pid);
+
 /**
  * Gets the last exit_status of the container's init process.
  * Only valid if the container is stopped...

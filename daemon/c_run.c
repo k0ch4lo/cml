@@ -8,7 +8,7 @@
 #include <sys/syscall.h>
 #include <sys/socket.h>
 
-#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
+//#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include <macro.h>
 
 #include "common/mem.h"
@@ -222,9 +222,10 @@ do_exec (c_run_t *run, char *cmd, char **argv, int fd)
 		exit(EXIT_FAILURE);
 	}
 
-	c_run_set_cgroups(run, getpid());
+	//TODO fixme
+	//container_add_pid_to_cgroups(run->container, getpid());
 
-	c_run_set_namespaces(getpgid(0));
+	c_run_set_namespaces(container_get_pid(run->container));
 
 	c_cap_start_child(run->container);
 
@@ -261,47 +262,47 @@ c_run_prepare_pty(c_run_t *run, int create_pty, char *cmd, char **argv)
 	//create new PTY
 	if (create_pty) {
 		TRACE("[EXEC] Starting to create new pty");
-	
+
 	    int pty_master = 0;
-	
+
 	    if(-1 == (pty_master = posix_openpt(O_RDWR)))
-	    {   
+	    {
 	        ERROR("[EXEC] Failed to get new PTY master fd\n");
 	        exit(EXIT_FAILURE);
-	    }   
-	
-	
+	    }
+
+
 	    if(0 != grantpt(pty_master))
-	    {   
+	    {
 	        printf("Failed to grantpt()\n");
 	        exit(EXIT_FAILURE);
-	    }   
-	
+	    }
+
 	    if(0 != unlockpt(pty_master))
-	    {   
+	    {
 	        printf("Failed to unlockpt()\n");
 	        exit(EXIT_FAILURE);;
-	    }   
-	
+	    }
+
 	    char pty_slave_name[50];
 	    ptsname_r(pty_master, pty_slave_name, sizeof(pty_slave_name));
 	    TRACE("Created new pty with fd: %i, slave name: %s\n", pty_master, pty_slave_name);
-	
+
 		//fork childs for reading/writing PTY master fd
 	    int pid = fork();
-	
-	    if(pid == -1) 
-	    {   
+
+	    if(pid == -1)
+	    {
 	        ERROR("Failed to fork(), exiting...\n");
 	        exit(EXIT_FAILURE);
-	    }   
+	    }
 	    else if(pid == 0)
 	    {
-			TRACE("[EXEC] Forked PTY master output reading process, PID: %d", getpid());   
-	    	readloop(pty_master, run->console_sock_container);
-	    }   
+			TRACE("[EXEC] Forked PTY master output reading process, PID: %d", getpid());
+			readloop(pty_master, run->console_sock_container);
+	    }
 	    else
-	    { 
+	    {
 			// fork child to execute command
 			int pid2 = fork();
 
@@ -314,40 +315,40 @@ c_run_prepare_pty(c_run_t *run, int create_pty, char *cmd, char **argv)
 
 				// open PTY slave
 				if (-1 == (pty_slave_fd = open(pty_slave_name, O_RDWR))) {
-   				    ERROR("Failed to open pty slave: %s\n", pty_slave_name);
+					    ERROR("Failed to open pty slave: %s\n", pty_slave_name);
 					//TODO check parent exits
 					shutdown(pty_master, SHUT_WR);
-    			    exit(EXIT_FAILURE);
+				    exit(EXIT_FAILURE);
 				}
 
 				const char *current_pty = ctermid(NULL);
 		        DEBUG("[EXEC] Current controlling PTY is: %s\n", current_pty);
-	
-	    	    setsid();
-	
-	        	if(-1 == ioctl(STDIN_FILENO, TIOCNOTTY)) {
-	    	        TRACE("[EXEC] Failed to release current controlling pty.\n");
-	        	}
-	
-		        if(-1 == ioctl(pty_slave_fd, TIOCSCTTY, NULL)) {
-		       	    ERROR("[EXEC] Failed to set controlling pty slave\n");
+
+			    setsid();
+
+				if(-1 == ioctl(STDIN_FILENO, TIOCNOTTY)) {
+					TRACE("[EXEC] Failed to release current controlling pty.\n");
+				}
+
+				if(-1 == ioctl(pty_slave_fd, TIOCSCTTY, NULL)) {
+				ERROR("[EXEC] Failed to set controlling pty slave\n");
 					exit(EXIT_FAILURE);
-	    	    }
-	
+			    }
+
 				// attach executed process to new PTY slave
 				do_exec(run, cmd, argv, pty_slave_fd);
 			} else {
-				//TODO kill if executing child exits 
-	        	while(1) {
+				//TODO kill if executing child exits
+				while(1) {
 					TRACE("[EXEC] Starting console socket read loop in process %d", getpid());
-	        	    readloop(run->console_sock_container, pty_master);
-	        	}
-			}	
-	
-	        exit(EXIT_SUCCESS);
-	    }   
-	
-	    exit(EXIT_SUCCESS);
+					readloop(run->console_sock_container, pty_master);
+				}
+			}
+
+			exit(EXIT_SUCCESS);
+		}
+
+		 exit(EXIT_SUCCESS);
 	} else {
 		// attach executed process directly to console socket
 		TRACE("Executing without PTY");
@@ -393,10 +394,10 @@ c_run_exec_process(c_run_t *run, int create_pty, char *cmd, uint64_t argc, char 
 		char ** exec_args = NULL;
 
 		if (argc > 0 && argv != NULL)
-		{ 
+		{
 			uint64_t i = 0;
 			exec_args = mem_alloc(sizeof(char *) * (argc + 1));
-	
+
 			while (i < argc)
 			{
 				TRACE("Got argument: %s", argv[i]);
@@ -419,7 +420,7 @@ c_run_exec_process(c_run_t *run, int create_pty, char *cmd, uint64_t argc, char 
 
 		c_run_prepare_pty(run, create_pty, cmd, exec_args);
 		//free argv
-		mem_free_array((void *) exec_args, argc);	
+		mem_free_array((void *) exec_args, argc);
 		exit(EXIT_FAILURE);
 	}
 

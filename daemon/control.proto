@@ -251,7 +251,7 @@ message DaemonToController {
 	optional string logon_mac_address = 204;			// MAC address for LOGON_DEVICE
 	optional string logon_phone_number = 205;			// Phone number for LOGON_DEVICE
 	optional string exec_end_reason = 206;
-	optional string exec_output = 207;
+	optional bytes exec_output = 207;
 }
 
 //message DaemonToConsole {

@@ -302,7 +302,7 @@ control_container_status_free(ContainerStatus *c_status)
 static ssize_t
 control_read_send(control_t * control, int fd)
 {
-	char buf[1024];
+	uint8_t buf[1024];
 	int count = -1;
 
 
@@ -311,12 +311,15 @@ control_read_send(control_t * control, int fd)
 
 		DaemonToController out = DAEMON_TO_CONTROLLER__INIT;
 		out.code = DAEMON_TO_CONTROLLER__CODE__EXEC_OUTPUT;
-		out.exec_output = buf;
+		out.has_exec_output = true;
+		out.exec_output.len = count;
+		out.exec_output.data = buf;
+
+		TRACE("[CONTROL] Read %d bytes: %s. Sending to control client...", count, buf);
 
 		if (protobuf_send_message(control->sock_client,
 					  (ProtobufCMessage *) & out) < 0) {
-			WARN("Could not send exec output to MDM, message was");
-			WARN(buf);
+			WARN("Could not send exec output to MDM");
 		}
 	}
 
@@ -338,14 +341,13 @@ static void control_cb_read_console(int fd, unsigned events, event_io_t * io,
 		    ("Detected termination of executed command. Stop listening.");
 
 		//TODO does read all open cmld for DDOS from container?
-		int i = 0, count = 1;
+		int i = 0, count = 0;
 
-		while (i < 100 && count > 0) {
+		do {
 			TRACE("Trying to read remaining data from socket");
 			count = control_read_send(control, fd);
-
 			TRACE("Response from read was %d", count);
-		}
+		} while (i < 100 && count > 0);
 
 		event_remove_io(io);
 		event_io_free(io);
@@ -365,7 +367,15 @@ static void control_cb_read_console(int fd, unsigned events, event_io_t * io,
 		TRACE
 		    ("Got output from exec'ed command, trying to read from console socket");
 
-		control_read_send(control, fd);
+			int i = 0, count = 0;
+
+			// necessary to get all output from interactive commands
+			do {
+				TRACE("Trying to read all available data from socket");
+				count = control_read_send(control, fd);
+
+				TRACE("Response from read was %d", count);
+			} while (i < 100 && count > 0);
 	}
 }
 
@@ -876,19 +886,19 @@ control_handle_message(control_t *control, const ControllerToDaemon *msg, int fd
 
 			if(container_run(container, msg->exec_pty, msg->exec_command, msg->n_exec_args, msg->exec_args) < 0) {
 				ERROR("Failed to exec. Wrong UUID or or already executing command in this container.");
-	
+
 				DaemonToController out = DAEMON_TO_CONTROLLER__INIT;
 				out.code = DAEMON_TO_CONTROLLER__CODE__EXEC_END;
-	
+
 				if (protobuf_send_message(
 					control->sock_client, (ProtobufCMessage *) & out) < 0) {
 					WARN("Could not send exec output to MDM");
 				}
-	
+
 				TRACE("Sent notification of command termination to control client");
-	
+
 				break;
-	
+
 			} else {
 				DEBUG("Registering read callback for cmld console socket");
 				event_io_t *event =

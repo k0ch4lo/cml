@@ -469,14 +469,15 @@ send_message:
 				TRACE("[CLIENT] Waiting for command output message from cmld");
 				DaemonToController *resp = recv_message(sock);
 
-				TRACE("[CLIENT] Got message from exec'ed process");
+				TRACE("[CLIENT] Got message from exec'ed process\n");
 
 				unsigned int count = 0;
 				unsigned int written = 0;
 
 				if (resp->code == DAEMON_TO_CONTROLLER__CODE__EXEC_OUTPUT) {
-					while (written < strlen(resp->exec_output)) {
-						written += write(STDOUT_FILENO, resp->exec_output + written, strlen(resp->exec_output) - written);
+				TRACE("[CLIENT] Message length; %d\n", resp->exec_output.len);
+					while (written < resp->exec_output.len) {
+						written += write(STDOUT_FILENO, resp->exec_output.data + written, resp->exec_output.len - written);
 						//write(STDOUT_FILENO, resp->exec_output, strlen(resp->exec_output));
 						fflush(stdout);
 					}
