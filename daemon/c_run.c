@@ -14,11 +14,82 @@
 #include "common/mem.h"
 #include "common/dir.h"
 #include "common/file.h"
+#include "common/fd.h"
 #include "hardware.h"
 #include "container.h"
 #include "c_run.h"
 #include "c_cgroups.h"
 #include "c_cap.h"
+
+struct c_run {
+	container_t *container;
+	int console_sock_cmld;
+	int console_sock_container;
+	pid_t active_exec_pid;
+};
+
+c_run_t *
+c_run_new(container_t *container)
+{
+	c_run_t *run = mem_new0(c_run_t, 1);
+	run->container = container;
+	run->console_sock_cmld = -1;
+	run->console_sock_container = -1;
+	run->active_exec_pid = -1;
+	return run;
+}
+
+void
+c_run_free(c_run_t *run)
+{
+	ASSERT(run);
+	mem_free(run);
+}
+
+void
+c_run_cleanup(c_run_t *run)
+{
+	ASSERT(run);
+
+	if(run->active_exec_pid != -1) {
+		if(! kill(run->active_exec_pid, SIGKILL)) {
+			// Happens if called from sigchld_handler
+			DEBUG("Failed to kill process inside container");
+		}
+
+		shutdown(run->console_sock_container, SHUT_WR);
+		shutdown(run->console_sock_cmld, SHUT_WR);
+		run->active_exec_pid = -1;
+	}
+}
+
+int c_run_get_console_sock_cmld(const c_run_t * run)
+{
+       ASSERT(run);
+       return run->console_sock_cmld;
+}
+
+int c_run_get_console_sock_container(const c_run_t * run)
+{
+       ASSERT(run);
+       return run->console_sock_container;
+}
+
+int c_run_get_active_exec_pid(const c_run_t * run)
+{
+       ASSERT(run);
+       return run->active_exec_pid;
+}
+
+int
+c_run_write_exec_input(c_run_t *run, char *exec_input)
+{
+	if (run->active_exec_pid != -1) {
+		return write(run->console_sock_cmld, exec_input, strlen(exec_input));
+	} else {
+		return -1;
+	}
+}
 
 int setns(int fd, int nstype)
 {
@@ -96,7 +167,7 @@ error:
 }
 
 int
-c_run_set_cgroups(const container_t *container, const pid_t pid)
+c_run_set_cgroups(const c_run_t *run, const pid_t pid)
 {
 	char *pid_string = mem_printf("%d", pid);
 
@@ -112,7 +183,7 @@ c_run_set_cgroups(const container_t *container, const pid_t pid)
 		//TODO dont hardcode
 		//TOD Oweak reference?
 		if (strcmp(elem, "pids") != 0) {
-			char *procs_path = mem_printf("/sys/fs/cgroup/%s/%s/cgroup.procs", elem, uuid_string(container_get_uuid(container)));
+			char *procs_path = mem_printf("/sys/fs/cgroup/%s/%s/cgroup.procs", elem, uuid_string(container_get_uuid(run->container)));
 
 			TRACE("[EXEC] Trying to put into cgroup %s\n", procs_path);
 
@@ -134,7 +205,7 @@ c_run_set_cgroups(const container_t *container, const pid_t pid)
 }
 
 static int
-do_exec (container_t *container, char *cmd, char **argv, int fd)
+do_exec (c_run_t *run, char *cmd, char **argv, int fd)
 {
 	if (-1 == dup2(fd, STDIN_FILENO)) {
 		ERROR("Failed to redirect stdin to cmld socket. Exiting...");
@@ -151,11 +222,11 @@ do_exec (container_t *container, char *cmd, char **argv, int fd)
 		exit(EXIT_FAILURE);
 	}
 
-	c_run_set_cgroups(container, getpid());
+	c_run_set_cgroups(run, getpid());
 
 	c_run_set_namespaces(getpgid(0));
 
-	c_cap_start_child(container);
+	c_cap_start_child(run->container);
 
 
 	TRACE("[EXEC: Executing command %s]", cmd);
@@ -185,7 +256,7 @@ readloop(int from_fd, int to_fd)
 }
 
 int
-c_run_exec_process(container_t *container, int create_pty, char *cmd, char **argv)
+c_run_prepare_pty(c_run_t *run, int create_pty, char *cmd, char **argv)
 {
 	//create new PTY
 	if (create_pty) {
@@ -227,7 +298,7 @@ c_run_exec_process(container_t *container, int create_pty, char *cmd, char **arg
 	    else if(pid == 0)
 	    {
 			TRACE("[EXEC] Forked PTY master output reading process, PID: %d", getpid());   
-	    	readloop(pty_master, container_get_console_container_sock(container));
+	    	readloop(pty_master, run->console_sock_container);
 	    }   
 	    else
 	    { 
@@ -264,12 +335,12 @@ c_run_exec_process(container_t *container, int create_pty, char *cmd, char **arg
 	    	    }
 	
 				// attach executed process to new PTY slave
-				do_exec(container, cmd, argv, pty_slave_fd);
+				do_exec(run, cmd, argv, pty_slave_fd);
 			} else {
 				//TODO kill if executing child exits 
 	        	while(1) {
 					TRACE("[EXEC] Starting console socket read loop in process %d", getpid());
-	        	    readloop(container_get_console_container_sock(container), pty_master);
+	        	    readloop(run->console_sock_container, pty_master);
 	        	}
 			}	
 	
@@ -280,6 +351,80 @@ c_run_exec_process(container_t *container, int create_pty, char *cmd, char **arg
 	} else {
 		// attach executed process directly to console socket
 		TRACE("Executing without PTY");
-		do_exec(container, cmd, argv, container_get_console_container_sock(container));
+		do_exec(run, cmd, argv, run->console_sock_container);
 	}
+}
+
+int
+c_run_exec_process(c_run_t *run, int create_pty, char *cmd, uint64_t argc, char **argv)
+{
+	TRACE("Trying to excute command \"%s\" inside container", cmd);
+	ASSERT(cmd);
+
+	if (run->active_exec_pid != -1) {
+		TRACE("[C_RUN] Already executing command. Aborting request.");
+		return -1;
+	}
+
+	TRACE("Trying to excute command inside container");
+
+	/* Create a socketpair for communication with the console task */
+	int cfd[2];
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, cfd)) {
+		WARN("Could not create socketpair for communication with console task!");
+		exit(EXIT_FAILURE);
+	}
+
+	run->console_sock_cmld = cfd[0];
+	run->console_sock_container = cfd[1];
+
+	//TODO
+	TRACE("Making cmld console socket nonblocking");
+	fd_make_non_blocking(run->console_sock_cmld);
+
+	pid_t pid = fork();
+
+	if (pid < 0) {
+		exit(EXIT_FAILURE);
+	} else if ( pid == 0 ) {
+		TRACE("Exec child forked, pid: %d", getpid());
+		//Add NULL pointer to end of argv
+		char ** exec_args = NULL;
+
+		if (argc > 0 && argv != NULL)
+		{ 
+			uint64_t i = 0;
+			exec_args = mem_alloc(sizeof(char *) * (argc + 1));
+	
+			while (i < argc)
+			{
+				TRACE("Got argument: %s", argv[i]);
+				exec_args[i] = mem_strdup(argv[i]);
+				i++;
+			}
+
+			exec_args[i] = NULL;
+		}
+
+
+		if(setpgid(0, container_get_pid(run->container)) < 0)
+		{
+			ERROR("Failed to set GID of exec child to container PID: %d", container_get_service_pid(run->container));
+			exit(EXIT_FAILURE);
+		}
+
+		/* close the cmld end of the console task sockets */
+		close(run->console_sock_cmld);
+
+		c_run_prepare_pty(run, create_pty, cmd, exec_args);
+		//free argv
+		mem_free_array((void *) exec_args, argc);	
+		exit(EXIT_FAILURE);
+	}
+
+	TRACE("Storing PID of active container: %d", pid);
+	run->active_exec_pid = pid;
+
+	return 0;
 }

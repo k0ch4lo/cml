@@ -147,17 +147,13 @@ struct container {
 	int sync_sock_parent; /* parent sock for start synchronization */
 	int sync_sock_child; /* child sock for start synchronization */
 
-	// needed for control exec
-	int console_sock_cmld;
-	int console_sock_container;
-	int active_exec_pid;
-
 	// Submodules
 	c_cgroups_t *cgroups;
 	c_net_t *net; /* encapsulates given network interfaces*/
 
 	c_vol_t *vol;
 	c_service_t *service;
+	c_run_t *run;
 	// Wifi module?
 
 	char *imei;
@@ -288,9 +284,6 @@ container_new_internal(
 	/* initialize exit_status to 0 */
 	container->exit_status = 0;
 
-	/* initialize exec pid to a value indicating it is invalid */
-	container->active_exec_pid = -1;
-
 	container->ns_usr = ns_usr;
 	container->ns_net = ns_net;
 	container->ns_ipc = hardware_supports_systemv_ipc() ? true : false;
@@ -372,6 +365,15 @@ container_new_internal(
 		     uuid_string(container->uuid));
 		goto error;
 	}
+
+	container->run = c_run_new(container);
+	if (!container->run) {
+		WARN("Could not initialize run subsystem for container %s (UUID: %s)", container->name,
+		     uuid_string(container->uuid));
+		goto error;
+	}
+
+
 
 	// construct an argv buffer for execve
 	container->init_argv = guestos_get_init_argv_new(os);
@@ -596,6 +598,8 @@ container_free(container_t *container) {
 		c_net_free(container->net);
 	if (container->vol)
 		c_vol_free(container->vol);
+	if (container->run)
+		c_run_free(container->run);
 	if (container->service)
 		c_service_free(container->service);
 	if (container->imei)
@@ -724,22 +728,22 @@ c_cgroups_t *container_get_cgroups(const container_t *container)
 	return container->cgroups;
 }
 
-int container_get_console_sock(const container_t * container)
+c_run_t *container_get_run(const container_t *container)
 {
 	ASSERT(container);
-	return container->console_sock_cmld;
+	return container->run;
 }
 
-int container_get_console_container_sock(const container_t * container)
+int container_get_console_sock_cmld(const container_t * container)
 {
 	ASSERT(container);
-	return container->console_sock_container;
+	return c_run_get_console_sock_cmld(container->run);
 }
 
-int container_get_active_exec_pid(const container_t * container)
+int container_get_console_sock_container(const container_t * container)
 {
 	ASSERT(container);
-	return container->active_exec_pid;
+	return c_run_get_console_sock_container(container->run);
 }
 
 int
@@ -855,6 +859,7 @@ container_cleanup(container_t *container)
 	c_cgroups_cleanup(container->cgroups);
 	c_service_cleanup(container->service);
 	c_net_cleanup(container->net);
+	c_run_cleanup(container->run);
 	/* cleanup c_vol last, as it removes partitions */
 	c_vol_cleanup(container->vol);
 
@@ -918,11 +923,9 @@ container_sigchld_cb(UNUSED int signum, event_signal_t *sig, void *data)
 			else
 				WARN_ERRNO("waitpid failed for container %s", container_get_description(container));
 			break;
-		} else if (pid == container->active_exec_pid) {
-			DEBUG("Exec'ed process exited. Closing sockets");
-			shutdown(container->console_sock_container, SHUT_WR);
-			shutdown(container->console_sock_cmld, SHUT_WR);
-			container->active_exec_pid = -1;
+		} else if (pid == c_run_get_active_exec_pid(container->run)) {
+			DEBUG("Exec'ed process exited. Cleaning up;");
+			c_run_cleanup(container->run);
 		} else {
 			DEBUG("Reaped a child with PID %d for container %s", pid, container_get_description(container));
 		}
@@ -1262,67 +1265,15 @@ container_run(container_t *container, int create_pty, char *cmd, uint64_t argc, 
 {
 	ASSERT(cmd);
 
-	TRACE("Trying to excute command inside container");
 
-	/* Create a socketpair for communication with the console task */
-	int cfd[2];
+	TRACE("Forwarding request to c_run subsystem");
+	return c_run_exec_process(container->run, create_pty, cmd, argc, argv);
+}
 
-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, cfd)) {
-		WARN("Could not create socketpair for communication with console task!");
-		exit(EXIT_FAILURE);
-	}
-
-	container->console_sock_cmld = cfd[0];
-	container->console_sock_container = cfd[1];
-
-	//TODO
-	TRACE("Making cmld console socket nonblocking");
-	fd_make_non_blocking(container->console_sock_cmld);
-
-	pid_t pid = fork();
-
-	if (pid < 0) {
-		exit(EXIT_FAILURE);
-	} else if ( pid == 0 ) {
-		TRACE("Exec child forked, pid: %d", getpid());
-		//Add NULL pointer to end of argv
-		char ** exec_args = NULL;
-
-		if (argc > 0 && argv != NULL)
-		{ 
-			uint64_t i = 0;
-			exec_args = mem_alloc(sizeof(char *) * (argc + 1));
-	
-			while (i < argc)
-			{
-				TRACE("Got argument: %s", argv[i]);
-				exec_args[i] = mem_strdup(argv[i]);
-				i++;
-			}
-
-			exec_args[i] = NULL;
-		}
-
-
-		if(setpgid(0, container->pid) < 0)
-		{
-			ERROR("Failed to set GID of exec child to container PID");
-			exit(EXIT_FAILURE);
-		}
-
-		/* close the cmld end of the console task sockets */
-		close(container->console_sock_cmld);
-
-		c_run_exec_process(container, create_pty, cmd, exec_args);
-		//free argv
-		mem_free_array((void *) exec_args, argc);	
-		exit(EXIT_FAILURE);
-	}
-
-	TRACE("Setting PID of active container: %d", pid);
-	container->active_exec_pid = pid;
-
-	return 0;
+int
+container_write_exec_input(container_t *container, char *exec_input)
+{
+	c_run_write_exec_input(container->run, exec_input);
 }
 
 int

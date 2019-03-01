@@ -3,10 +3,30 @@
 
 #include "container.h"
 
+
+typedef struct c_run c_run_t;
+
+c_run_t *
+c_run_new(container_t *container);
+
+void
+c_run_free(c_run_t *run);
+
 int
 c_run_set_namespaces(pid_t pid);
 
-int
-c_run_exec_process(container_t *container, int create_pty, char *cmd, char **argv);
+void
+c_run_cleanup(c_run_t *run);
 
+int
+c_run_write_exec_input(c_run_t *run, char *exec_input);
+
+int
+c_run_exec_process(c_run_t *run, int create_pty, char *cmd, uint64_t argc, char **argv);
+
+int c_run_get_console_sock_cmld(const c_run_t * run);
+
+int c_run_get_console_sock_container(const c_run_t * run);
+
+int c_run_get_active_exec_pid(const c_run_t * run);
 #endif //end C_RUN_H

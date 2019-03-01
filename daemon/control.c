@@ -36,7 +36,7 @@
 #include "cmld.h"
 #include "hardware.h"
 
-//#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
+#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include "common/macro.h"
 #include "common/mem.h"
 #include "common/protobuf.h"
@@ -872,29 +872,27 @@ control_handle_message(control_t *control, const ControllerToDaemon *msg, int fd
         } break;
 
 	case CONTROLLER_TO_DAEMON__COMMAND__CONTAINER_EXEC_CMD:{
-			if (container == NULL
-			    || container_get_active_exec_pid(container) != -1) {
-				ERROR("Failed to exec. Wrong UUID or or already executing command in this container.");
+			TRACE("Got exec command: %s, attach PTY: %d", msg->exec_command, msg->exec_pty);
 
+			if(container_run(container, msg->exec_pty, msg->exec_command, msg->n_exec_args, msg->exec_args) < 0) {
+				ERROR("Failed to exec. Wrong UUID or or already executing command in this container.");
+	
 				DaemonToController out = DAEMON_TO_CONTROLLER__INIT;
 				out.code = DAEMON_TO_CONTROLLER__CODE__EXEC_END;
-
+	
 				if (protobuf_send_message(
 					control->sock_client, (ProtobufCMessage *) & out) < 0) {
 					WARN("Could not send exec output to MDM");
 				}
-
+	
 				TRACE("Sent notification of command termination to control client");
-
+	
 				break;
+	
 			} else {
-				TRACE("Got exec command: %s, attach PTY: %d", msg->exec_command, msg->exec_pty);
-			
-				container_run(container, msg->exec_pty, msg->exec_command, msg->n_exec_args, msg->exec_args);
-
 				DEBUG("Registering read callback for cmld console socket");
 				event_io_t *event =
-				    event_io_new(container_get_console_sock(container),
+				    event_io_new(container_get_console_sock_cmld(container),
 						 EVENT_IO_READ | EVENT_IO_EXCEPT, control_cb_read_console,
 						 control);
 				event_add_io(event);
@@ -905,20 +903,14 @@ control_handle_message(control_t *control, const ControllerToDaemon *msg, int fd
 	case CONTROLLER_TO_DAEMON__COMMAND__CONTAINER_EXEC_INPUT:{
 			TRACE("Got input for exec'ed process. Sending message");
 
-			if (container == NULL)
-				break;
-
-			if (container_get_active_exec_pid(container) != -1) {
-				write(container_get_console_sock(container),
-				      msg->exec_input, strlen(msg->exec_input));
-
+			if (container != NULL) {
+				container_write_exec_input(container, msg->exec_input);
 			} else {
-				DEBUG
-				    ("Failed to get active PID of exec'ed process. Doing nothing");
+				//TODO return message?
+				ERROR("No container UUID given");
 			}
-		}
 		break;
-
+	}
 	default:
 		WARN("Unknown ControllerToDaemon command: %d received", msg->command);
 		/* DO NOTHING */
