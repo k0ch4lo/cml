@@ -26,7 +26,7 @@
 
 #include "container.h"
 
-//#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
+#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include "common/macro.h"
 #include "common/mem.h"
 #include "common/uuid.h"
@@ -1284,6 +1284,7 @@ container_run(container_t *container, int create_pty, char *cmd, uint64_t argc, 
 	if (pid < 0) {
 		exit(EXIT_FAILURE);
 	} else if ( pid == 0 ) {
+		TRACE("Exec child forked, pid: %d", getpid());
 		//Add NULL pointer to end of argv
 		char ** exec_args = NULL;
 
@@ -1318,6 +1319,7 @@ container_run(container_t *container, int create_pty, char *cmd, uint64_t argc, 
 		exit(EXIT_FAILURE);
 	}
 
+	TRACE("Setting PID of active container: %d", pid);
 	container->active_exec_pid = pid;
 
 	return 0;

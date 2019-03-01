@@ -874,7 +874,7 @@ control_handle_message(control_t *control, const ControllerToDaemon *msg, int fd
 	case CONTROLLER_TO_DAEMON__COMMAND__CONTAINER_EXEC_CMD:{
 			if (container == NULL
 			    || container_get_active_exec_pid(container) != -1) {
-				WARN("Failed to exec. Wrong UUID or or already executing command in this container.");
+				ERROR("Failed to exec. Wrong UUID or or already executing command in this container.");
 
 				DaemonToController out = DAEMON_TO_CONTROLLER__INIT;
 				out.code = DAEMON_TO_CONTROLLER__CODE__EXEC_END;

@@ -8,7 +8,7 @@
 #include <sys/syscall.h>
 #include <sys/socket.h>
 
-//#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
+#define LOGF_LOG_MIN_PRIO LOGF_PRIO_TRACE
 #include <macro.h>
 
 #include "common/mem.h"
@@ -225,8 +225,9 @@ c_run_exec_process(container_t *container, int create_pty, char *cmd, char **arg
 	        exit(EXIT_FAILURE);
 	    }   
 	    else if(pid == 0)
-	    {   
-	            readloop(pty_master, container_get_console_container_sock(container));
+	    {
+			TRACE("[EXEC] Forked PTY master output reading process, PID: %d", getpid());   
+	    	readloop(pty_master, container_get_console_container_sock(container));
 	    }   
 	    else
 	    { 
@@ -237,6 +238,7 @@ c_run_exec_process(container_t *container, int create_pty, char *cmd, char **arg
 				ERROR("[EXEC] Failed to fork child to excute command.");
 				exit(EXIT_FAILURE);
 			} else if (pid2 == 0) {
+				TRACE("[EXEC] Command executing child forked, PID: %d", getpid());
 				int pty_slave_fd = -1;
 
 				// open PTY slave
@@ -266,6 +268,7 @@ c_run_exec_process(container_t *container, int create_pty, char *cmd, char **arg
 			} else {
 				//TODO kill if executing child exits 
 	        	while(1) {
+					TRACE("[EXEC] Starting console socket read loop in process %d", getpid());
 	        	    readloop(container_get_console_container_sock(container), pty_master);
 	        	}
 			}	

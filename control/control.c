@@ -345,30 +345,46 @@ int main(int argc, char *argv[])
 	} else if (!strcasecmp(command, "run")) {
 		if (optind > argc - 2)
 			print_usage(argv[0]);
+
 		has_response = true;
 		msg.command = CONTROLLER_TO_DAEMON__COMMAND__CONTAINER_EXEC_CMD;
-		msg.exec_command = argv[optind];
-		msg.exec_pty = 1;
 
-		optind += 1;
+		int nopty = 0, argcount = 0;
+
+
+		msg.has_exec_pty = true;
+
+		if (! strcmp(argv[optind], "nopty")) {
+			TRACE("Got nopty option");
+			msg.exec_pty = 0;
+			nopty = 1;
+			optind++;
+		} else {
+			msg.exec_pty = 1;
+		}
+
+		if (optind > argc - 2)
+			print_usage(argv[0]);
+
+		msg.exec_command = argv[optind];
 
 		if (optind < argc - 1) {
-			TRACE("[CLIENT] Allocating %d bytes for arguments", sizeof(char *) * (argc - 4));
-			msg.exec_args = mem_alloc(sizeof(char *) * (argc - 4));
-
-			uint64_t i = 0;
+			//TODO ok?
+			TRACE("[CLIENT] Allocating %d bytes for arguments", sizeof(char *) * argc);
+			msg.exec_args = mem_alloc(sizeof(char *) * argc);
 
 			while (optind < argc - 1) {
-				msg.exec_args[i] = mem_strdup(argv[optind]);
+				TRACE("[CLIENT] Parsing command arguments at index %d, optind: %d: %s",argcount,optind, argv[optind]);
+				msg.exec_args[argcount] = mem_strdup(argv[optind]);
 
 				optind++;
-				i++;
+				argcount++;
 			}
 		}
 
-		msg.n_exec_args = argc - 4;
-
-		optind = argc - 1;
+		TRACE("[CLIENT] Done parsing arguments, got %d argsuments", argcount);
+		msg.n_exec_args = argcount;
+		TRACE("after set n_exec_args");
 	} else
 		print_usage(argv[0]);
 
@@ -390,6 +406,16 @@ send_message:
 	if (!strcasecmp(command, "run")) {
 		TRACE("[CLIENT] Processing response for run command");
 
+		if(msg.exec_pty) {
+			TRACE("[CLIENT] Setting termios for PTY");
+			struct termios termios_run = termios_before;
+			termios_run.c_cflag &= ~(ICRNL | IXON | IXOFF );
+			termios_run.c_oflag &= ~(OPOST);
+			termios_run.c_lflag &= ~(ISIG | ICANON | ECHO | ECHOCTL);
+			//		termios_run.c_lflag &= ECHO | ECHOCTL;
+			tcsetattr(STDIN_FILENO, TCSANOW, &termios_run);
+		}
+
 		//free exec arguments
 		//TODO! n_ unsigned?
 		TRACE("[CLIENT] Freeing %d args at %p", msg.n_exec_args, msg.exec_args);
@@ -398,12 +424,6 @@ send_message:
 
 
 
-		struct termios termios_run = termios_before;
-		termios_run.c_cflag &= ~(ICRNL | IXON | IXOFF );
-		termios_run.c_oflag &= ~(OPOST);
-		termios_run.c_lflag &= ~(ISIG | ICANON | ECHO | ECHOCTL);
-//		termios_run.c_lflag &= ECHO | ECHOCTL;
-		tcsetattr(STDIN_FILENO, TCSANOW, &termios_run);
 
 		int pid = fork();
 
@@ -455,9 +475,11 @@ send_message:
 				unsigned int written = 0;
 
 				if (resp->code == DAEMON_TO_CONTROLLER__CODE__EXEC_OUTPUT) {
-
-					write(STDOUT_FILENO, resp->exec_output, strlen(resp->exec_output));
-					fflush(stdout);
+					while (written < strlen(resp->exec_output)) {
+						written += write(STDOUT_FILENO, resp->exec_output + written, strlen(resp->exec_output) - written);
+						//write(STDOUT_FILENO, resp->exec_output, strlen(resp->exec_output));
+						fflush(stdout);
+					}
 
 				} else if (resp->code == DAEMON_TO_CONTROLLER__CODE__EXEC_END) {
 					TRACE("[CLIENT] Got notification of command termination. Exiting...");
