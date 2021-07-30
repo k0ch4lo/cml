@@ -29,10 +29,7 @@
 #include <openssl/evp.h>
 #include <openssl/x509v3.h>
 
-typedef enum {
-	RSA_PSS_PADDING,
-	RSA_SSA_PADDING
-} rsa_padding_t;
+typedef enum { RSA_PSS_PADDING, RSA_SSA_PADDING } rsa_padding_t;
 
 /**
  * reads a pkcs12 softtoken located in the file token_file, unlocked with the password passphrase,
@@ -54,7 +51,7 @@ ssl_read_pkcs12_token(const char *token_file, const char *passphrase, EVP_PKEY *
  * @return returns 0 on success, -1 in case of a failure. */
 int
 ssl_create_csr(const char *req_file, const char *key_file, const char *passphrase,
-	       const char *common_name, const char *uid, bool tpmkey);
+	       const char *common_name, const char *uid, bool tpmkey, rsa_padding_t rsa_padding);
 
 /**
  * This function wraps a (symmetric) key plain_key of length plain_key_len into a wrapped key wrapped_key
@@ -128,7 +125,7 @@ ssl_verify_signature_from_buf(uint8_t *cert_buf, size_t cert_len, const uint8_t 
  */
 int
 ssl_verify_signature_from_digest(const char *cert_buf, const uint8_t *sig_buf, size_t sig_len,
-				 const uint8_t *hash, size_t hash_len, rsa_padding_t rsa_padding);
+				 const uint8_t *hash, size_t hash_len);
 
 /**
  * The file located in file_to_hash is hashed with the hash algorithm hash_algo.
@@ -144,7 +141,7 @@ ssl_hash_file(const char *file_to_hash, unsigned int *calc_len, const char *hash
  */
 int
 ssl_create_pkcs12_token(const char *token_file, const char *cert_file, const char *passphrase,
-			const char *user_name);
+			const char *user_name, rsa_padding_t rsa_padding);
 
 /**
  * changes the passwphrase/pin of a pkcs 12 softtoken located in the file token_file,
@@ -190,8 +187,5 @@ ssl_free(void);
  */
 const char *
 get_digest_name_by_sig_algo_obj(const ASN1_OBJECT *obj);
-
-EVP_PKEY *
-ssl_mkkeypair_pss(void);
 
 #endif /* P12UTIL_H */

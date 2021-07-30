@@ -100,8 +100,7 @@ logf.pb-c.c: logf.proto
 
 LFLAGS_TEST := \
 	-lssl \
-	-lcrypto \
-	-libmtss
+	-lcrypto
 
 TEST_SUITES := \
 	mem.test.c \
