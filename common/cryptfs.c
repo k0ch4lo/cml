@@ -26,6 +26,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/sendfile.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -541,15 +542,43 @@ cryptfs_setup_volume_integrity_new(const char *label, const char *real_blkdev,
 			ERROR("Cannot open volume %s", crypto_blkdev);
 			goto error;
 		}
-		char zeros[DM_INTEGRITY_BUF_SIZE] __attribute__((__aligned__(512)));
-		for (unsigned long i = 0; i < fs_size / 8; ++i) {
-			if (write(fd, zeros, DM_INTEGRITY_BUF_SIZE) < DM_INTEGRITY_BUF_SIZE) {
-				ERROR_ERRNO("Could not write empty block %lu to %s", i,
-					    crypto_blkdev);
-				close(fd);
+
+    	size_t towrite = fs_size*512;
+
+		int zero_fd;
+	    ssize_t written = 0, out;
+    	size_t count;
+
+
+		if (0 > (zero_fd = open("/run/testfile_sparse", O_RDWR | O_CREAT))) {
+				ERROR_ERRNO("Failed to create testfile");
+				close(zero_fd);
 				goto error;
-			}
 		}
+
+
+
+		if (0 > ftruncate(zero_fd, towrite)) {
+				ERROR_ERRNO("Failed to create sparse testfile");
+				close(zero_fd);
+				goto error;
+		}
+
+	    while (0 < (towrite - written)) {
+	        count = towrite - written;
+
+    	    if (0 >= (out = sendfile(fd, zero_fd, 0, count))) {
+        	    DEBUG_ERRNO("Failed to write, errno ");
+	        }   
+
+	    	DEBUG("Writing, written: %zd, out: %zd", written, out);
+        	written += out;
+    	}   
+
+	    DEBUG("Wrote %zd bytes", written);
+
+
+		close(zero_fd);
 		close(fd);
 	}
 	return crypto_blkdev;
