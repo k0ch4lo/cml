@@ -59,6 +59,7 @@
 #include "common/proc.h"
 #include "common/event.h"
 #include "common/ns.h"
+#include "common/fd.h"
 #include "container.h"
 #include "cmld.h"
 #include "hotplug.h"
@@ -1064,6 +1065,30 @@ err:
 }
 #endif
 
+#define CHILD_LOG_BUF_SIZE 512
+static void
+logf_handle_child_log(int fd, UNUSED unsigned events, UNUSED event_io_t *io, UNUSED void *data) {
+	DEBUG("Reading log message from child on fd %d", fd);
+	
+	char buf[CHILD_LOG_BUF_SIZE];
+	int ret = -1;
+
+	do {
+		mem_memset0(buf, CHILD_LOG_BUF_SIZE);
+		ret = fd_read(fd, buf, CHILD_LOG_BUF_SIZE-1);
+
+		if (ret < 0)
+			break;
+
+		DEBUG("Read message from helper child: '%s'", buf);
+		logf_write_preformatted(LOGF_PRIO_DEBUG, buf);
+	} while (0 < ret);
+
+	DEBUG("Finished processing log messages of helper child, got %d", ret);
+}
+
+
+
 /**
  * This function is responsible for moving the container interface to its corresponding namespace.
  * This Function is part of TSF.CML.CompartmentIsolation.
@@ -1129,19 +1154,49 @@ c_net_start_post_clone(void *netp)
 		}
 	}
 
+	int child_log_fds[2];
+	if (pipe(child_log_fds)) {
+	//if (socketpair(AF_UNIX, SOCK_STREAM, 0, child_log_fds)) {
+		WARN("Could not create pipe for log messages of helper child!");
+		return -COMPARTMENT_ERROR_NET;
+	}
+
+	// event handler
+	event_io_t *child_log_event_io = event_io_new(child_log_fds[0], EVENT_IO_READ, &logf_handle_child_log, NULL);
+	event_add_io(child_log_event_io);
+
+	DEBUG("Forking c_net helper child with pipe fds %d, %d", child_log_fds[0], child_log_fds[1]);
+
 	// configure moved rootns veth endpoint in c0's network namespace
 	pid_t *c0_netns_pid = mem_new0(pid_t, 1);
 	*c0_netns_pid = fork();
 	if (*c0_netns_pid == -1) {
+		//TODO handle log levels from child process
 		ERROR_ERRNO("Could not fork for switching to c0's netns");
 		mem_free0(c0_netns_pid);
 		return -COMPARTMENT_ERROR_NET;
 	} else if (*c0_netns_pid == 0) {
+		// reset event loop and logging
+		event_reset(); // reset event_loop cloned from parent
+		logf_unregister_all(); // reset loggers cloned from parent
+
+		FILE *log_pipe_p = logf_fd_open(child_log_fds[1]);
+
+		if (EOF == fputs("testmsg\n", log_pipe_p)) {
+			exit(1);
+		}
+
+		if (EOF == fflush(log_pipe_p)) {
+			exit(2);
+		}
+
+		logf_handler_t *log_handler = logf_register(logf_file_write, log_pipe_p);
+		//DEBUG("Registered log file handler for pipe fd %d", child_log_fds[1]);
+
 		const char *hostns = cmld_containers_get_c0() ? "c0" : "CML";
 
-		DEBUG("Configuring netifs in %s", hostns);
+		//DEBUG("Configuring netifs in %s", hostns);
 
-		event_reset(); // reset event_loop of cloned from parent
 		if (cmld_containers_get_c0()) {
 			char *c0_netns = mem_printf("/proc/%d/ns/net",
 						    container_get_pid(cmld_containers_get_c0()));
@@ -1162,7 +1217,7 @@ c_net_start_post_clone(void *netp)
 			if (!ni->configure)
 				continue;
 
-			DEBUG("set IFF_UP for veth: %s", ni->veth_cmld_name);
+			//DEBUG("set IFF_UP for veth: %s", ni->veth_cmld_name);
 
 			/* Configure uplink of CML in c0 */
 			if (!strcmp(ni->nw_name, CML_UPLINK_INTERFACE_NAME)) {
@@ -1198,12 +1253,19 @@ c_net_start_post_clone(void *netp)
 			DEBUG("Successfully configured %s in %s, wait for child to exit.",
 			      ni->veth_cmld_name, hostns);
 		}
-		DEBUG("Setup of net ifs in netns of %s done, exiting netns child!", hostns);
+		//DEBUG("Setup of net ifs in netns of %s done, exiting netns child!", hostns);
+
+		logf_unregister(log_handler);
+		logf_file_close(log_pipe_p);
+
 		_exit(0); // don't call atexit registered cleanup of main process
 	} else {
 		DEBUG("Setup of nis should be done by pid=%d", *c0_netns_pid);
 		// register at sigchild handler for helper clone in netns of c0
-		container_wait_for_child(net->container, "c0-netns-helper", *c0_netns_pid);
+		container_wait_for_child_extended(net->container, "c0-netns-helper", *c0_netns_pid, child_log_event_io, child_log_fds);
+
+		// close write end of child's log pipe in parent 
+		//close(child_log_fds[1]) ;
 
 		/* setup uplink of cml */
 		c_net_interface_t *ni = list_nth_data(net->interface_list, 0);

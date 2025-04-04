@@ -530,6 +530,13 @@ container_wait_for_child(container_t *container, char *name, pid_t pid)
 	compartment_wait_for_child(container->compartment, name, pid);
 }
 
+void
+container_wait_for_child_extended(container_t *container, char *name, pid_t pid, event_io_t *child_log_event_io, int child_log_fds[2])
+{
+	ASSERT(container);
+	compartment_wait_for_child_extended(container->compartment, name, pid, child_log_event_io, child_log_fds);
+}
+
 // ##################################################################
 // directly implemented in container
 // ##################################################################

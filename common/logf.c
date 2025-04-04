@@ -227,7 +227,7 @@ logf_message_file_hexdump(logf_prio_t prio, const char *file, int line, const vo
 static list_t *logf_handler_list = NULL;
 
 struct logf_handler {
-	void (*func)(logf_prio_t prio, const char *msg, void *data);
+	void (*func)(logf_prio_t prio, const char *msg, void *data, bool preformatted);
 	void *data;
 	logf_prio_t prio;
 };
@@ -238,13 +238,26 @@ logf_write(logf_prio_t prio, const char *msg)
 	for (list_t *l = logf_handler_list; l; l = l->next) {
 		logf_handler_t *h = l->data;
 		if (h && h->func && prio >= h->prio) {
-			(h->func)(prio, msg, h->data);
+			(h->func)(prio, msg, h->data, false);
 		}
 	}
 }
 
+void
+logf_write_preformatted(logf_prio_t prio, const char *msg)
+{
+	for (list_t *l = logf_handler_list; l; l = l->next) {
+		logf_handler_t *h = l->data;
+		if (h && h->func && prio >= h->prio) {
+			(h->func)(prio, msg, h->data, true);
+		}
+	}
+}
+
+
+
 logf_handler_t *
-logf_register(void (*func)(logf_prio_t prio, const char *msg, void *data), void *data)
+logf_register(void (*func)(logf_prio_t prio, const char *msg, void *data, bool preformatted), void *data)
 {
 	logf_handler_t *handler = mem_new(logf_handler_t, 1);
 
@@ -253,6 +266,9 @@ logf_register(void (*func)(logf_prio_t prio, const char *msg, void *data), void 
 	handler->prio = LOGF_PRIO_TRACE;
 
 	logf_handler_list = list_append(logf_handler_list, handler);
+
+
+	DEBUG("Registered log handler %p", (void *) handler);
 
 	return handler;
 }
@@ -264,6 +280,20 @@ logf_unregister(logf_handler_t *handler)
 	logf_handler_list = list_remove(logf_handler_list, handler);
 
 	mem_free0(handler);
+}
+
+void
+logf_unregister_all()
+{
+	for (list_t *l = logf_handler_list; l; l = l->next) {
+		logf_handler_t *handler = (logf_handler_t *) l->data;
+
+		DEBUG("Freeing log handler %p", (void *) handler);
+		
+		logf_handler_list = list_remove(logf_handler_list, handler);
+
+		mem_free0(handler);
+	}
 }
 
 void
@@ -397,6 +427,22 @@ logf_file_new_name(const char *name)
 }
 
 void *
+logf_fd_open(int fd)
+{
+	IF_TRUE_RETVAL_ERROR(fd < 0, NULL);
+
+	FILE *f;
+	if (! (f = fdopen(fd, "w")))
+		FATAL_ERRNO("Failed to open file stream on fd %d", fd);
+
+	if (0 != setvbuf(f, NULL, _IOLBF, 0)) {
+		fclose(f);
+		f = NULL;
+	}
+
+	return f;
+}
+void *
 logf_file_new(const char *name)
 {
 	char *current = mem_printf("%s%s", name, ".current");
@@ -405,7 +451,7 @@ logf_file_new(const char *name)
 	char *name_with_time_of_day = logf_file_new_name(name);
 	f = fopen(name_with_time_of_day, "w");
 	if (!f) {
-		FATAL_ERRNO("Failed to open log file\n");
+		FATAL_ERRNO("Failed to open log file %s\n", name_with_time_of_day);
 	}
 
 	if (0 != setvbuf(f, NULL, _IOLBF, 0)) {
@@ -431,7 +477,10 @@ void
 logf_file_close(void *file)
 {
 	FILE *f = file;
-	fclose(f);
+
+	if (EOF == fclose(f)) {
+		ERROR_ERRNO("Failed to close log file");
+	}
 }
 
 static void
@@ -480,14 +529,19 @@ prio_str(logf_prio_t prio)
 	}
 }
 
+
 void
-logf_file_write(logf_prio_t prio, const char *msg, void *data)
+logf_file_write(logf_prio_t prio, const char *msg, void *data, bool preformatted)
 {
 	if (!data)
 		return;
 
-	logf_file_write_timestamp(data);
-	fprintf(data, "[%u] %s %s\n", getpid(), prio_str(prio), msg);
+	if (! preformatted) {
+		logf_file_write_timestamp(data);
+		fprintf(data, "[%u] %s %s\n", getpid(), prio_str(prio), msg);
+	} else {
+		fprintf(data, "%s", msg);
+	}
 
 	int res = -1;
 	if (0 != (res = fflush(data))) {
@@ -496,9 +550,14 @@ logf_file_write(logf_prio_t prio, const char *msg, void *data)
 	}
 }
 
+
+
 void
-logf_test_write(logf_prio_t prio, const char *msg, void *data)
+logf_test_write(logf_prio_t prio, const char *msg, void *data, bool preformatted)
 {
+	if (preformatted)
+		return;
+
 	if (!data)
 		return;
 
@@ -520,7 +579,7 @@ logf_syslog_new(const char *name)
 }
 
 void
-logf_syslog_write(logf_prio_t prio, const char *msg, void *data)
+logf_syslog_write(logf_prio_t prio, const char *msg, void *data, bool preformatted)
 {
 	int prio_syslog;
 
@@ -544,7 +603,11 @@ logf_syslog_write(logf_prio_t prio, const char *msg, void *data)
 		break;
 	}
 
-	syslog(prio_syslog, "%s %s %s\n", prio_str(prio), (char *)data, msg);
+	//TODO test
+	if (! preformatted)
+		syslog(prio_syslog, "%s %s %s\n", prio_str(prio), (char *)data, msg);
+	else
+		syslog(prio_syslog, "%s", msg);
 }
 
 void *
@@ -555,8 +618,11 @@ logf_android_new(const char *name)
 
 #ifdef ANDROID
 void
-logf_android_write(logf_prio_t prio, const char *msg, void *data)
+logf_android_write(logf_prio_t prio, const char *msg, void *data, bool preformatted)
 {
+	if (preformatted)
+		return;
+
 	int prio_android;
 
 	switch (prio) {
@@ -587,7 +653,7 @@ logf_android_write(logf_prio_t prio, const char *msg, void *data)
 }
 #else
 void
-logf_android_write(UNUSED logf_prio_t prio, UNUSED const char *msg, UNUSED void *data)
+logf_android_write(UNUSED logf_prio_t prio, UNUSED const char *msg, UNUSED void *data, UNUSED bool preformatted)
 {
 	return;
 }
@@ -603,11 +669,15 @@ logf_klog_new(const char *name)
 	return mem_strdup(name);
 }
 
+//TODO remove android
 #ifdef ANDROID
 void
-logf_klog_write(logf_prio_t prio, const char *msg, void *data)
+logf_klog_write(logf_prio_t prio, const char *msg, void *data, bool preformatted)
 {
 	int prio_klog;
+
+	if (preformatted)
+		return;
 
 	switch (prio) {
 	case LOGF_PRIO_FATAL:
@@ -629,12 +699,11 @@ logf_klog_write(logf_prio_t prio, const char *msg, void *data)
 		break;
 	}
 
-	klog_write(prio_klog, "<%u>%s[%u] %s %s\n", prio_klog, (char *)data, getpid(),
-		   prio_str(prio), msg);
+		klog_write(prio_klog, "<%u>%s[%u] %s %s\n", prio_klog, (char *)data, getpid(), prio_str(prio), msg);
 }
 #else
 void
-logf_klog_write(UNUSED logf_prio_t prio, UNUSED const char *msg, UNUSED void *data)
+logf_klog_write(UNUSED logf_prio_t prio, UNUSED const char *msg, UNUSED void *data, UNUSED bool preformatted)
 {
 	return;
 }

@@ -38,6 +38,7 @@
 
 #include "common/uuid.h"
 #include "common/list.h"
+#include "common/event.h"
 
 #include <sys/types.h>
 #include <stdint.h>
@@ -503,5 +504,8 @@ compartment_get_allow_system_time(compartment_t *compartment);
  */
 void
 compartment_wait_for_child(compartment_t *compartment, char *name, pid_t pid);
+
+void
+compartment_wait_for_child_extended(compartment_t *compartment, char *name, pid_t pid, event_io_t *child_log_event_io, int child_log_fds[2]);
 
 #endif /* COMPARTMENT_H */

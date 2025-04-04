@@ -38,6 +38,7 @@
 
 #include "common/uuid.h"
 #include "common/list.h"
+#include "common/event.h"
 #include "compartment.h"
 
 #include <sys/types.h>
@@ -473,6 +474,10 @@ container_contains_pid(const container_t *container, pid_t pid);
 
 void
 container_wait_for_child(container_t *container, char *name, pid_t pid);
+
+void
+container_wait_for_child_extended(container_t *container, char *name, pid_t pid, event_io_t *child_log_event_io, int child_log_fds[2]);
+
 
 // ##################################################################
 // end compartment wrappers

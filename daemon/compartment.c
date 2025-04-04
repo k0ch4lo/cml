@@ -150,6 +150,8 @@ typedef struct {
 typedef struct {
 	pid_t pid;
 	char *name;
+	event_io_t *child_log_event_io;
+	int child_log_fds[2];
 } compartment_helper_child_t;
 /**
  * These are used for synchronizing the compartment start between parent
@@ -254,11 +256,14 @@ compartment_module_get_mod_instance_by_name(const compartment_t *compartment, co
 }
 
 static compartment_helper_child_t *
-compartment_helper_child_new(char *name, pid_t pid)
+compartment_helper_child_new(char *name, pid_t pid, event_io_t *child_log_event_io, int child_log_fds[2])
 {
 	compartment_helper_child_t *child = mem_new0(compartment_helper_child_t, 1);
 	child->name = mem_strdup(name ? name : "generic");
 	child->pid = pid;
+	child->child_log_event_io = child_log_event_io;
+	child->child_log_fds[0] = child_log_fds[0];
+	child->child_log_fds[1] = child_log_fds[1];
 
 	return child;
 }
@@ -270,6 +275,15 @@ compartment_helper_child_free(compartment_helper_child_t *child)
 
 	if (child->name)
 		mem_free0(child->name);
+
+	if (child->child_log_event_io) {
+		event_remove_io(child->child_log_event_io);
+		event_io_free(child->child_log_event_io);
+
+		//TODO CONTINUE read + log all remaining data from pipe
+		close(child->child_log_fds[0]) ;
+	}
+
 	mem_free0(child);
 }
 
@@ -1883,7 +1897,11 @@ compartment_wait_for_child(compartment_t *compartment, char *name, pid_t pid)
 {
 	ASSERT(compartment);
 
-	compartment_helper_child_t *child = compartment_helper_child_new(name, pid);
+	int *fds = mem_new0(int, 2);
+	fds[0] = -1;
+	fds[1] = -1;
+
+	compartment_helper_child_t *child = compartment_helper_child_new(name, pid, NULL, fds);
 	compartment->helper_child_list = list_append(compartment->helper_child_list, child);
 
 	DEBUG("Helpers registered:");
@@ -1892,3 +1910,22 @@ compartment_wait_for_child(compartment_t *compartment, char *name, pid_t pid)
 		DEBUG("\t Helper child '%s' (%d)", child->name, child->pid);
 	}
 }
+
+void
+compartment_wait_for_child_extended(compartment_t *compartment, char *name, pid_t pid, event_io_t *child_log_event_io, int child_log_fds[2])
+{
+	ASSERT(compartment);
+
+	compartment_helper_child_t *child = compartment_helper_child_new(name, pid, child_log_event_io, child_log_fds);
+	compartment->helper_child_list = list_append(compartment->helper_child_list, child);
+
+
+	DEBUG("Extended helper child registered, pipe fds: %d, %d, event_io: %p", child->child_log_fds[0], child->child_log_fds[1], (void *) child_log_event_io);
+
+	DEBUG("Helpers registered:");
+	for (list_t *l = compartment->helper_child_list; l; l = l->next) {
+		compartment_helper_child_t *child = l->data;
+		DEBUG("\t Helper child '%s' (%d)", child->name, child->pid);
+	}
+}
+

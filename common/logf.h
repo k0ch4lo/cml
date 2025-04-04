@@ -220,11 +220,20 @@ void
 logf_write(logf_prio_t prio, const char *msg);
 
 /**
+ * Logs a preformatted message, e.g. received from helper child, to all registered log writers (logf_*_write).
+ *
+ * @param msg The log message.
+ */
+void
+logf_write_preformatted(logf_prio_t prio, const char *msg);
+
+
+/**
  * Registers a log writer.
  *
  */
 logf_handler_t *
-logf_register(void (*func)(logf_prio_t prio, const char *msg, void *data), void *data);
+logf_register(void (*func)(logf_prio_t prio, const char *msg, void *data, bool preformatted), void *data);
 
 /**
  * Unregisters a log writer.
@@ -234,10 +243,30 @@ void
 logf_unregister(logf_handler_t *handler);
 
 /**
+ * Unregister all log writers
+ *
+ */
+void
+logf_unregister_all();
+
+
+
+/**
  * Set the lowest priority for messages logged to this handler
  */
 void
 logf_handler_set_prio(logf_handler_t *handler, logf_prio_t prio);
+
+/**
+ * Opens an existing fd Generates a logfile name by appending a unique timestamp to the filename.
+ * The result is in RFC3339 format, e.g., `<name>.2014-05-23T21:29:11.150495+02:00'.
+ *
+ * @param name Name of the log file.
+ * @return The new name with timestamp.
+ */
+
+void *
+logf_fd_open(int fd);
 
 /**
  * Generates a logfile name by appending a unique timestamp to the filename.
@@ -277,7 +306,7 @@ logf_file_close(void *file);
  * @param data stdout/stderr or a file.
  */
 void
-logf_file_write(logf_prio_t prio, const char *msg, void *data);
+logf_file_write(logf_prio_t prio, const char *msg, void *data, bool preformatted);
 
 /**
  *  Similar to logf_file_write but omits the (varying) timestamp and may thus
@@ -286,9 +315,10 @@ logf_file_write(logf_prio_t prio, const char *msg, void *data);
  * @param prio Priority of the log message.
  * @param msg The log message.
  * @param data stdout/stderr or a file.
+ * @param preformatted True if message is already formatted, e.g. received from helper child
  */
 void
-logf_test_write(logf_prio_t prio, const char *msg, void *data);
+logf_test_write(logf_prio_t prio, const char *msg, void *data, bool preformatted);
 
 /**
  * Opens syslog for logf_syslog_write and sets the log tag.
@@ -305,9 +335,10 @@ logf_syslog_new(const char *name);
  * @param prio Priority of the log message.
  * @param msg The log message.
  * @param data The log name.
+ * @param preformatted True if message is already formatted, e.g. received from helper child
  */
 void
-logf_syslog_write(logf_prio_t prio, const char *msg, void *data);
+logf_syslog_write(logf_prio_t prio, const char *msg, void *data, bool preformatted);
 
 /**
  * Sets log tag for logf_android_write.
@@ -326,7 +357,7 @@ logf_android_new(const char *name);
  * @param data The log name.
  */
 void
-logf_android_write(logf_prio_t prio, const char *msg, void *data);
+logf_android_write(logf_prio_t prio, const char *msg, void *data, bool preformatted);
 
 /**
  * Sets log tag for logf_klog_write.
@@ -345,7 +376,7 @@ logf_klog_new(const char *name);
  * @param data The log name.
  */
 void
-logf_klog_write(logf_prio_t prio, const char *msg, void *data);
+logf_klog_write(logf_prio_t prio, const char *msg, void *data, bool preformatted);
 
 /**
  * Provides a list with currently used log files.
